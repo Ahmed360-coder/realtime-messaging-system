@@ -4,7 +4,8 @@
   "description": "Real-time client-server messaging system – CSEN 503 Computer Networks, Winter 2026",
   "main": "server/index.js",
   "scripts": {
-    "start": "node server/index.js"
+    "start": "node server/index.js",
+    "test": "node --test"
   },
   "repository": {
     "type": "git",
@@ -14,6 +15,7 @@
   "type": "commonjs",
   "dependencies": {
     "express": "^5.2.1",
-    "qrcode-terminal": "^0.12.0"
+    "qrcode-terminal": "^0.12.0",
+    "ws": "^8.22.0"
   }
 }

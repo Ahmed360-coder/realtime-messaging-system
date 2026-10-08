@@ -1,0 +1,86 @@
+// Unit tests for the ChatProto v1 codec (no network involved).
+// Run with: npm test
+
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const ChatProto = require('../protocols/chatproto');
+const { TYPES, ERRORS } = ChatProto;
+
+const decodeObj = (obj, allowed) => ChatProto.decode(JSON.stringify(obj), allowed);
+const validMsg = () => ChatProto.make(TYPES.MSG, { to: 'bob', body: 'hi' });
+
+test('make() fills the header fields', () => {
+  const m = ChatProto.make(TYPES.HELLO, { body: { username: 'alice' } });
+  assert.equal(m.v, 1);
+  assert.equal(m.type, 'HELLO');
+  assert.match(m.id, /^[0-9a-f-]{36}$/);
+  assert.ok(Number.isFinite(m.ts));
+});
+
+test('uuid() produces distinct v4 UUIDs', () => {
+  const ids = new Set(Array.from({ length: 1000 }, ChatProto.uuid));
+  assert.equal(ids.size, 1000);
+  for (const id of ids) assert.match(id, /^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+});
+
+test('encode -> decode round trip', () => {
+  const m = validMsg();
+  const r = ChatProto.decode(ChatProto.encode(m));
+  assert.equal(r.ok, true);
+  assert.deepEqual(r.msg, m);
+});
+
+test('rejects non-JSON and non-objects', () => {
+  assert.equal(ChatProto.decode('hello').error.code, ERRORS.BAD_JSON);
+  assert.equal(ChatProto.decode('[1,2]').error.code, ERRORS.BAD_JSON);
+  assert.equal(ChatProto.decode('null').error.code, ERRORS.BAD_JSON);
+  assert.equal(ChatProto.decode(42).error.code, ERRORS.BAD_JSON);
+});
+
+test('rejects oversized frames', () => {
+  const r = ChatProto.decode('x'.repeat(ChatProto.MAX_FRAME_BYTES + 1));
+  assert.equal(r.error.code, ERRORS.TOO_LARGE);
+});
+
+test('rejects wrong version and echoes the id as ref', () => {
+  const m = { ...validMsg(), v: 2 };
+  const r = decodeObj(m);
+  assert.equal(r.error.code, ERRORS.BAD_VERSION);
+  assert.equal(r.error.ref, m.id);
+});
+
+test('rejects unknown types and types the client may not send', () => {
+  assert.equal(decodeObj({ ...validMsg(), type: 'NOPE' }).error.code, ERRORS.BAD_TYPE);
+  assert.equal(decodeObj({ ...validMsg(), type: 'toString' }).error.code, ERRORS.BAD_TYPE);
+  // WELCOME is server -> client only.
+  assert.equal(decodeObj({ ...validMsg(), type: 'WELCOME' }, ChatProto.CLIENT_TYPES).error.code, ERRORS.BAD_TYPE);
+});
+
+test('rejects bad header fields', () => {
+  assert.equal(decodeObj({ ...validMsg(), id: 'abc' }).error.code, ERRORS.BAD_FIELD);
+  assert.equal(decodeObj({ ...validMsg(), id: undefined }).error.code, ERRORS.BAD_FIELD);
+  assert.equal(decodeObj({ ...validMsg(), ts: 'now' }).error.code, ERRORS.BAD_FIELD);
+});
+
+test('validates HELLO usernames', () => {
+  const hello = username => decodeObj(ChatProto.make(TYPES.HELLO, { body: { username } }));
+  assert.equal(hello('alice_2').ok, true);
+  assert.equal(hello('').error.code, ERRORS.BAD_FIELD);
+  assert.equal(hello('has space').error.code, ERRORS.BAD_FIELD);
+  assert.equal(hello('x'.repeat(21)).error.code, ERRORS.BAD_FIELD);
+  assert.equal(decodeObj(ChatProto.make(TYPES.HELLO, {})).error.code, ERRORS.BAD_FIELD);
+});
+
+test('validates MSG to/body', () => {
+  assert.equal(decodeObj({ ...validMsg(), to: undefined }).error.code, ERRORS.BAD_FIELD);
+  assert.equal(decodeObj({ ...validMsg(), body: '   ' }).error.code, ERRORS.BAD_FIELD);
+  assert.equal(decodeObj({ ...validMsg(), body: { text: 'hi' } }).error.code, ERRORS.BAD_FIELD);
+  assert.equal(decodeObj({ ...validMsg(), body: 'x'.repeat(ChatProto.MAX_BODY_CHARS + 1) }).error.code, ERRORS.BAD_FIELD);
+});
+
+test('decodes server messages with SERVER_TYPES', () => {
+  const welcome = ChatProto.make(TYPES.WELCOME, { body: { username: 'a', users: ['a'] } });
+  assert.equal(decodeObj(welcome, ChatProto.SERVER_TYPES).ok, true);
+  const err = ChatProto.error(ERRORS.NAME_TAKEN, 'taken', null);
+  assert.equal(decodeObj(err, ChatProto.SERVER_TYPES).ok, true);
+});

@@ -6,59 +6,233 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Realtime Chat</title>
   <style>
+    * { box-sizing: border-box; }
     body {
       margin: 0;
       font-family: system-ui, sans-serif;
       background: #0f172a;
       color: #e2e8f0;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      min-height: 100vh;
       padding: 16px;
-      box-sizing: border-box;
     }
     .card {
       background: #1e293b;
       border-radius: 12px;
-      padding: 24px;
-      max-width: 400px;
-      width: 100%;
-      text-align: center;
+      padding: 16px;
+      max-width: 600px;
+      margin: 0 auto 12px;
     }
-    .status { font-size: 1.2rem; margin: 16px 0; }
+    h1 { font-size: 1.3rem; margin: 0 0 8px; }
+    h2 { font-size: 1rem; margin: 0 0 8px; color: #94a3b8; }
     .ok { color: #4ade80; }
     .fail { color: #f87171; }
-    .info { color: #94a3b8; font-size: 0.9rem; }
+    .info { color: #94a3b8; font-size: 0.85rem; }
+    form { display: flex; gap: 8px; }
+    input, select, button {
+      font: inherit; padding: 8px; border-radius: 8px; border: 1px solid #334155;
+      background: #0f172a; color: inherit; min-width: 0;
+    }
+    input { flex: 1; }
+    button { background: #2563eb; border: none; cursor: pointer; }
+    button:disabled { opacity: 0.5; }
+    #users { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 6px; }
+    #users li { background: #334155; border-radius: 999px; padding: 4px 10px; font-size: 0.9rem; }
+    #users li.me { background: #166534; }
+    #messages, #frames {
+      list-style: none; padding: 0; margin: 0 0 8px; overflow-y: auto; font-size: 0.9rem;
+    }
+    #messages { max-height: 40vh; }
+    #messages li { padding: 4px 0; border-bottom: 1px solid #334155; overflow-wrap: anywhere; }
+    #messages .meta { color: #94a3b8; font-size: 0.75rem; }
+    #frames { max-height: 30vh; font-family: ui-monospace, monospace; font-size: 0.75rem; }
+    #frames li { padding: 2px 0; overflow-wrap: anywhere; }
+    .out { color: #93c5fd; }
+    .in { color: #fcd34d; }
+    .hidden { display: none; }
   </style>
 </head>
 <body>
   <div class="card">
     <h1>Realtime Chat</h1>
-    <p class="status" id="status">Checking connection...</p>
-    <p class="info" id="info"></p>
+    <p class="info">Connection: <span id="status">connecting…</span></p>
+
+    <form id="joinForm">
+      <input id="username" placeholder="Choose a username (letters, digits, _)" maxlength="20" autocomplete="off">
+      <button id="joinBtn" disabled>Join</button>
+    </form>
   </div>
 
+  <div class="card hidden" id="chat">
+    <h2>Online</h2>
+    <ul id="users"></ul>
+  </div>
+
+  <div class="card hidden" id="chat2">
+    <h2>Messages</h2>
+    <ul id="messages"></ul>
+    <form id="sendForm">
+      <select id="to"></select>
+      <input id="text" placeholder="Message" maxlength="2000" autocomplete="off">
+      <button>Send</button>
+    </form>
+  </div>
+
+  <div class="card">
+    <h2>ChatProto frames <span class="info">(<span class="out">↑ sent</span> / <span class="in">↓ received</span>)</span></h2>
+    <ul id="frames"></ul>
+    <form id="rawForm">
+      <input id="raw" placeholder='Send a raw frame, e.g. {"v":1,"type":"NOPE"}' autocomplete="off">
+      <button>Raw</button>
+    </form>
+  </div>
+
+  <script src="/protocols/chatproto.js"></script>
   <script>
-    // Step 1 check: ask the server's /api/health endpoint and measure the round-trip time.
-    async function checkServer() {
-      const statusEl = document.getElementById('status');
-      const infoEl = document.getElementById('info');
-      const start = performance.now();
-      try {
-        const res = await fetch('/api/health');
-        const data = await res.json();
-        const rtt = (performance.now() - start).toFixed(1);
-        statusEl.textContent = 'Connected to server';
-        statusEl.className = 'status ok';
-        infoEl.textContent = `Your IP: ${data.yourIP} · Round-trip: ${rtt} ms`;
-      } catch (err) {
-        statusEl.textContent = 'Cannot reach server';
-        statusEl.className = 'status fail';
-        infoEl.textContent = err.message;
+    // Minimal ChatProto v1 client (the full mobile UI comes in Step 4).
+    const { TYPES } = ChatProto;
+    const $ = id => document.getElementById(id);
+
+    let ws = null;
+    let me = null;          // our username after WELCOME
+    let online = [];        // online usernames
+
+    // ws:// for http pages, wss:// for https pages; same host and port as the page.
+    const WS_URL = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`;
+
+    function connect() {
+      ws = new WebSocket(WS_URL);
+      setStatus('connecting…', '');
+
+      ws.onopen = () => {
+        setStatus('connected (WebSocket open)', 'ok');
+        $('joinBtn').disabled = false;
+      };
+
+      ws.onmessage = (event) => {
+        logFrame('in', event.data);
+        const result = ChatProto.decode(event.data, ChatProto.SERVER_TYPES);
+        if (!result.ok) return console.warn('bad frame from server', result.error);
+        onMessage(result.msg);
+      };
+
+      ws.onclose = (event) => {
+        setStatus(`disconnected (code ${event.code})`, 'fail');
+        $('joinBtn').disabled = true;
+        me = null;
+        $('chat').classList.add('hidden');
+        $('chat2').classList.add('hidden');
+        $('joinForm').classList.remove('hidden');
+        // Step 3 adds automatic reconnect + offline sync.
+      };
+    }
+
+    function onMessage(msg) {
+      switch (msg.type) {
+        case TYPES.WELCOME:
+          me = msg.body.username;
+          online = msg.body.users;
+          $('joinForm').classList.add('hidden');
+          $('chat').classList.remove('hidden');
+          $('chat2').classList.remove('hidden');
+          setStatus(`connected as ${me}`, 'ok');
+          renderUsers();
+          break;
+        case TYPES.USERS:
+          online = msg.body.users;
+          renderUsers();
+          break;
+        case TYPES.PRESENCE:
+          if (msg.body.status === 'online') online = [...new Set([...online, msg.body.username])].sort();
+          else online = online.filter(u => u !== msg.body.username);
+          renderUsers();
+          addLine(`${msg.body.username} is ${msg.body.status}`, '');
+          break;
+        case TYPES.MSG:
+          addLine(msg.body, `${msg.from} → ${msg.to} · ${new Date(msg.ts).toLocaleTimeString()}`);
+          break;
+        case TYPES.ACK:
+          addLine(`✓ ${msg.body.status}`, `ack for ${msg.body.ref.slice(0, 8)}`);
+          break;
+        case TYPES.ERROR:
+          addLine(`${msg.body.code}: ${msg.body.message}`, 'error', true);
+          break;
       }
     }
-    checkServer();
+
+    function send(msg) {
+      const text = ChatProto.encode(msg);
+      logFrame('out', text);
+      ws.send(text);
+      return msg;
+    }
+
+    $('joinForm').onsubmit = (e) => {
+      e.preventDefault();
+      send(ChatProto.make(TYPES.HELLO, { body: { username: $('username').value.trim() } }));
+    };
+
+    $('sendForm').onsubmit = (e) => {
+      e.preventDefault();
+      const to = $('to').value;
+      const body = $('text').value;
+      if (!to || !body.trim()) return;
+      send(ChatProto.make(TYPES.MSG, { to, body }));
+      addLine(body, `${me} → ${to} · ${new Date().toLocaleTimeString()}`);
+      $('text').value = '';
+    };
+
+    // Lets us send malformed frames on purpose to show the server's ERROR replies.
+    $('rawForm').onsubmit = (e) => {
+      e.preventDefault();
+      if (!ws || ws.readyState !== WebSocket.OPEN) return;
+      logFrame('out', $('raw').value);
+      ws.send($('raw').value);
+    };
+
+    function renderUsers() {
+      const list = $('users');
+      list.replaceChildren();
+      for (const u of online) {
+        const li = document.createElement('li');
+        li.textContent = u === me ? `${u} (you)` : u;
+        if (u === me) li.className = 'me';
+        list.append(li);
+      }
+      // Recipient picker: everyone except ourselves; keep the current choice if still online.
+      const select = $('to');
+      const previous = select.value;
+      select.replaceChildren();
+      for (const u of online.filter(u => u !== me)) select.append(new Option(u, u));
+      if (online.includes(previous)) select.value = previous;
+    }
+
+    // textContent (never innerHTML) so a message cannot inject HTML/JS into the page.
+    function addLine(text, meta, isError) {
+      const li = document.createElement('li');
+      const body = document.createElement('div');
+      body.textContent = text;
+      if (isError) body.className = 'fail';
+      const m = document.createElement('div');
+      m.className = 'meta';
+      m.textContent = meta;
+      li.append(body, m);
+      $('messages').append(li);
+      $('messages').scrollTop = $('messages').scrollHeight;
+    }
+
+    function logFrame(dir, text) {
+      const li = document.createElement('li');
+      li.className = dir;
+      li.textContent = `${dir === 'out' ? '↑' : '↓'} ${text}`;
+      $('frames').append(li);
+      $('frames').scrollTop = $('frames').scrollHeight;
+    }
+
+    function setStatus(text, cls) {
+      $('status').textContent = text;
+      $('status').className = cls;
+    }
+
+    connect();
   </script>
 </body>
 </html>
