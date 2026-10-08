@@ -1,0 +1,245 @@
+/* Realtime Chat – phone-first styles (Step 4).
+   Designed for 360–430px wide screens first; on a laptop the app is a centred
+   480px column so it looks like the phone version. */
+
+/* ---- Design tokens: every colour is defined once, then swapped for dark mode ---- */
+:root {
+  --bg: #f1f5f9;
+  --surface: #ffffff;
+  --surface-2: #e2e8f0;
+  --text: #0f172a;
+  --muted: #475569;
+  --accent: #2563eb;
+  --accent-text: #ffffff;
+  --ok: #15803d;
+  --warn: #b45309;
+  --danger: #b91c1c;
+  --banner-bg: #fef3c7;
+  --banner-text: #78350f;
+  --gutter: 16px;   /* side padding on every screen */
+  --tap: 48px;      /* minimum size of anything you tap (Material 48dp, Apple 44pt) */
+  --radius: 18px;
+}
+@media (prefers-color-scheme: dark) {
+  :root {
+    --bg: #0b1220;
+    --surface: #111a2e;
+    --surface-2: #1e293b;
+    --text: #e2e8f0;
+    --muted: #94a3b8;
+    --accent: #3b82f6;
+    --ok: #4ade80;
+    --warn: #fbbf24;
+    --danger: #f87171;
+    --banner-bg: #422006;
+    --banner-text: #fde68a;
+  }
+}
+
+/* ---- Base ---- */
+* { box-sizing: border-box; } /* padding counts inside width: nothing grows past 100% */
+[hidden] { display: none !important; } /* `hidden` must win over display:flex below */
+html, body { height: 100%; }
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 16px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  overflow: hidden; /* only the message list / contact list scroll, not the page */
+}
+button, input { font: inherit; color: inherit; }
+button { cursor: pointer; }
+:focus-visible { outline: 3px solid var(--accent); outline-offset: 2px; }
+.sr-only { /* visible to screen readers only */
+  position: absolute; width: 1px; height: 1px; overflow: hidden;
+  clip: rect(0 0 0 0); white-space: nowrap;
+}
+
+/* The whole app is one flex column the height of the visible screen:
+   banner / current view (takes the rest) / optional debug panel. */
+.app {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;   /* fallback for old browsers */
+  height: 100dvh;  /* "dynamic" height: excludes the phone's sliding address bar */
+  max-width: 480px;
+  margin: 0 auto;
+  background: var(--surface);
+}
+.view {
+  flex: 1;
+  min-height: 0; /* lets the inner list shrink and scroll instead of overflowing */
+  display: flex;
+  flex-direction: column;
+}
+
+/* ---- Top bar ---- */
+.bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 56px;
+  padding: 4px var(--gutter);
+  padding-top: max(4px, env(safe-area-inset-top)); /* clear the notch */
+  border-bottom: 1px solid var(--surface-2);
+}
+.bar-title { flex: 1; min-width: 0; }
+.bar h1, .bar h2 { margin: 0; font-size: 1.2rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.subtitle { display: block; font-size: 0.8rem; color: var(--muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.icon-btn {
+  min-width: var(--tap); min-height: var(--tap);
+  border: none; border-radius: 12px; background: transparent;
+  font-size: 1.1rem; color: var(--muted);
+}
+#backBtn { font-size: 2rem; line-height: 1; margin-left: -12px; color: var(--accent); }
+.debug-toggle { font-family: ui-monospace, monospace; font-size: 0.9rem; }
+.debug-toggle[aria-pressed="true"] { background: var(--surface-2); color: var(--text); }
+
+/* ---- Connection banner ---- */
+.banner {
+  display: flex; align-items: center; gap: 8px;
+  padding: 8px var(--gutter);
+  background: var(--banner-bg); color: var(--banner-text);
+  font-size: 0.9rem;
+}
+.banner #bannerText { flex: 1; min-width: 0; }
+.banner.good { background: var(--surface-2); color: var(--ok); }
+.banner-action {
+  min-height: 40px; padding: 0 14px; border: none; border-radius: 999px;
+  background: var(--banner-text); color: var(--banner-bg); font-weight: 600;
+}
+
+/* ---- Join screen ---- */
+.join-form {
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 24px var(--gutter);
+}
+.join-form label { font-weight: 600; margin-top: 8px; }
+.join-form input, .composer input {
+  min-height: var(--tap);
+  padding: 0 14px;
+  border: 1px solid var(--surface-2);
+  border-radius: 12px;
+  background: var(--bg);
+  font-size: 16px; /* < 16px makes iPhone Safari zoom in when the field is tapped */
+  min-width: 0;
+}
+.hint { margin: 0; color: var(--muted); font-size: 0.85rem; }
+.error { margin: 0; min-height: 1.2em; color: var(--danger); font-size: 0.9rem; }
+.primary {
+  min-height: var(--tap); border: none; border-radius: 12px;
+  background: var(--accent); color: var(--accent-text); font-weight: 600;
+}
+.primary:disabled { opacity: 0.6; }
+
+/* ---- Contact list ---- */
+.contacts {
+  flex: 1; min-height: 0; overflow-y: auto;
+  list-style: none; margin: 0; padding: 0;
+}
+.contact {
+  display: flex; align-items: center; gap: 12px;
+  width: 100%; min-height: 64px;
+  padding: 8px var(--gutter);
+  border: none; border-bottom: 1px solid var(--surface-2);
+  background: transparent; text-align: left;
+}
+.contact:active { background: var(--surface-2); }
+.avatar {
+  position: relative; flex: none;
+  width: 44px; height: 44px; border-radius: 50%;
+  display: grid; place-items: center;
+  background: var(--surface-2); font-weight: 700; text-transform: uppercase;
+}
+.dot { /* presence dot on the avatar; the state is also in text for screen readers */
+  position: absolute; right: 0; bottom: 0;
+  width: 13px; height: 13px; border-radius: 50%;
+  border: 2px solid var(--surface); background: var(--muted);
+}
+.dot.online { background: var(--ok); }
+.contact-main { flex: 1; min-width: 0; }
+.contact-top { display: flex; align-items: baseline; gap: 8px; }
+.contact-name { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.contact-time { flex: none; font-size: 0.75rem; color: var(--muted); }
+.contact-bottom { display: flex; align-items: center; gap: 8px; }
+.preview { flex: 1; min-width: 0; color: var(--muted); font-size: 0.9rem; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.badge {
+  flex: none; min-width: 22px; height: 22px; padding: 0 7px; border-radius: 999px;
+  background: var(--accent); color: var(--accent-text);
+  font-size: 0.75rem; font-weight: 700; line-height: 22px; text-align: center;
+}
+.empty { margin: auto; padding: var(--gutter); text-align: center; color: var(--muted); }
+
+/* ---- Messages ---- */
+.messages {
+  flex: 1; min-height: 0; overflow-y: auto;
+  list-style: none; margin: 0;
+  padding: 12px var(--gutter);
+  display: flex; flex-direction: column; gap: 6px;
+  background: var(--bg);
+  overscroll-behavior: contain; /* scrolling the chat doesn't scroll/refresh the page */
+}
+.bubble {
+  max-width: 80%;
+  padding: 8px 12px 6px;
+  border-radius: var(--radius);
+  background: var(--surface);
+  align-self: flex-start;                /* received: left */
+  border-bottom-left-radius: 6px;
+  white-space: pre-wrap;                 /* keep line breaks in the text */
+  overflow-wrap: anywhere;               /* a 200-char URL wraps instead of widening the page */
+}
+.bubble.mine {
+  align-self: flex-end;                  /* sent: right */
+  background: var(--accent); color: var(--accent-text);
+  border-bottom-left-radius: var(--radius); border-bottom-right-radius: 6px;
+}
+.meta {
+  display: flex; justify-content: flex-end; align-items: center; gap: 4px;
+  margin-top: 2px; font-size: 0.7rem; opacity: 0.75; white-space: nowrap;
+}
+.tick { font-weight: 700; letter-spacing: -0.15em; }
+.tick.delivered { color: #a7f3d0; opacity: 1; }
+.bubble.failed { background: var(--danger); }
+.fail-reason { display: block; font-size: 0.75rem; margin-top: 2px; }
+.messages .empty { margin: auto; }
+
+/* ---- Composer (message box) ---- */
+.composer {
+  display: flex; gap: 8px;
+  padding: 8px var(--gutter);
+  padding-bottom: max(8px, env(safe-area-inset-bottom)); /* clear the iPhone home bar */
+  border-top: 1px solid var(--surface-2);
+}
+.composer input { flex: 1; border-radius: 999px; }
+.send {
+  flex: none; width: var(--tap); height: var(--tap);
+  border: none; border-radius: 50%;
+  background: var(--accent); color: var(--accent-text); font-size: 1.2rem;
+}
+
+/* ---- Debug panel (oral demo) ---- */
+.debug {
+  flex: none; max-height: 42%;
+  display: flex; flex-direction: column;
+  border-top: 2px solid var(--accent);
+  background: var(--bg);
+  font-size: 0.8rem;
+}
+.debug-stats { margin: 0; padding: 6px var(--gutter); color: var(--muted); }
+.debug-actions { display: flex; flex-wrap: wrap; gap: 6px; padding: 0 var(--gutter) 6px; }
+.debug-actions button, .raw button {
+  min-height: 40px; padding: 0 12px; border: 1px solid var(--surface-2);
+  border-radius: 10px; background: var(--surface);
+}
+.frames {
+  flex: 1; min-height: 60px; overflow-y: auto;
+  list-style: none; margin: 0; padding: 0 var(--gutter);
+  font-family: ui-monospace, Consolas, monospace; font-size: 0.72rem;
+}
+.frames li { padding: 2px 0; overflow-wrap: anywhere; border-bottom: 1px dashed var(--surface-2); }
+.frames .out { color: var(--accent); }
+.frames .in { color: var(--warn); }
+.frames .note { color: var(--muted); }
+.raw { padding-bottom: 8px; }
+.raw input { font-family: ui-monospace, monospace; font-size: 16px; }

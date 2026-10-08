@@ -78,7 +78,8 @@ branch with no client to use it.
 Code layout: `protocols/chatproto.js` (format) → `server/transports/websocket.js`
 (socket ↔ protocol) → `server/core/hub.js` (protocol-agnostic routing, presence, sync) →
 `server/core/store.js` (SQLite). Client side: `client/chat-client.js` (retry, dedup,
-reconnect; no UI) → `client/index.html` (UI).
+reconnect; no UI) → `client/conversations.js` (page state; no UI) → `client/app.js` +
+`index.html` + `style.css` (the phone UI).
 
 ### Reliability (implemented in Step 3)
 TCP only guarantees delivery between two kernels while one connection lives; it cannot
@@ -113,6 +114,29 @@ Database (`chat.db`, git-ignored; `DB_PATH` overrides): `users(username PK, toke
 created_at, last_seen)`, `messages(seq PK AUTOINCREMENT, id UNIQUE, sender, recipient,
 body, ts, stored_at)` with indexes on `(recipient, seq)` and `(sender, seq)`.
 
+### Mobile chat UI (Step 4)
+Plain HTML/CSS/JS served from `client/` (no framework, no build step), designed for
+360–430px phone screens first:
+
+- **Screens:** join → chat list (online dot, last message, unread badge) → one chat
+  (bubbles, time, delivery ticks). Opening a chat pushes a browser-history entry, so the
+  phone's back gesture returns to the list.
+- **Delivery ticks come from ChatProto:** 🕓 waiting (in the outbox, no `ACK` yet) ·
+  ✓ stored (`ACK stored`/`duplicate`, or replayed from history) · ✓✓ delivered
+  (`ACK delivered`) · ! refused (`ERROR` with `ref`).
+- **Unread counts:** a "read up to seq N" cursor per chat, saved in `localStorage`, so a
+  reload (which replays the full history) does not mark everything unread again.
+- **Connection banner:** connecting / offline + reconnect countdown + messages waiting /
+  "opened in another tab" (close `4001`, with a *Use here* button) / "N messages synced".
+- **State → view:** ChatClient events only update the state (`client/conversations.js`,
+  unit-tested in Node); `render()` redraws the screen from it.
+- **XSS safety:** user text reaches the page only through `textContent`; a test fails if
+  client code ever uses `innerHTML`, `outerHTML`, `insertAdjacentHTML` or `document.write`.
+- **Phone details:** viewport meta, `100dvh`, safe-area insets, 16px gutter, 48px tap
+  targets, 16px input font (no iOS zoom), light/dark colours, `aria-live` banner.
+- **Debug panel** (`{ }` button, for the demo): raw frame log, `lastSeq`, outbox size,
+  *Drop connection*, *Re-send last (same id)*, raw-frame input.
+
 ### Additional Features (planned)
 - Group chat.
 
@@ -139,7 +163,7 @@ docs/        design document and diagrams
 - [x] Step 1 – Server skeleton: phones reach the laptop over Wi-Fi (HTTP, LAN IP, QR code)
 - [x] Step 2 – ChatProto v1: custom protocol over WebSocket
 - [x] Step 3 – Reliability: SQLite storage, ACKs, deduplication, offline sync
-- [ ] Step 4 – Mobile chat UI
+- [x] Step 4 – Mobile chat UI
 - [ ] Step 5 – MQTT: second application-layer protocol
 - [ ] Step 6 – Live metrics dashboard
 - [ ] Step 7 – Group chat
