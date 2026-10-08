@@ -62,4 +62,28 @@ benchmarks/  performance test scripts and results
 docs/        design document and diagrams
 ```
 
-## Running (to be added)
+## Progress
+
+- [x] Step 1 – Server skeleton: phones reach the laptop over Wi-Fi (HTTP, LAN IP, QR code)
+- [ ] Step 2 – ChatProto v1: custom protocol over WebSocket
+- [ ] Step 3 – Reliability: SQLite storage, ACKs, deduplication, offline sync
+- [ ] Step 4 – Mobile chat UI
+- [ ] Step 5 – MQTT: second application-layer protocol
+- [ ] Step 6 – Live metrics dashboard
+- [ ] Step 7 – Group chat
+- [ ] Step 8 – End-to-end encryption
+- [ ] Step 9 – Benchmarks and charts
+- [ ] Step 10 – Documentation, demo rehearsal, oral defense prep
+
+## Running
+
+Requires Node.js 22+.
+
+```bash
+npm install
+npm start
+```
+
+The server prints its Wi-Fi address and a QR code. Open that address on a phone connected
+to the same Wi-Fi. If the phone cannot connect, allow Node.js through Windows Firewall
+(Private networks).

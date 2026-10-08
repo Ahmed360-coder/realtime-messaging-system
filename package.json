@@ -1,0 +1,19 @@
+{
+  "name": "realtime-messaging-system",
+  "version": "1.0.0",
+  "description": "Real-time client-server messaging system – CSEN 503 Computer Networks, Winter 2026",
+  "main": "server/index.js",
+  "scripts": {
+    "start": "node server/index.js"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Ahmed360-coder/realtime-messaging-system.git"
+  },
+  "license": "ISC",
+  "type": "commonjs",
+  "dependencies": {
+    "express": "^5.2.1",
+    "qrcode-terminal": "^0.12.0"
+  }
+}

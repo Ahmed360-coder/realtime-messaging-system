@@ -1,0 +1,64 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <!-- Makes the page fit phone screens instead of showing a zoomed-out desktop page -->
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Realtime Chat</title>
+  <style>
+    body {
+      margin: 0;
+      font-family: system-ui, sans-serif;
+      background: #0f172a;
+      color: #e2e8f0;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      min-height: 100vh;
+      padding: 16px;
+      box-sizing: border-box;
+    }
+    .card {
+      background: #1e293b;
+      border-radius: 12px;
+      padding: 24px;
+      max-width: 400px;
+      width: 100%;
+      text-align: center;
+    }
+    .status { font-size: 1.2rem; margin: 16px 0; }
+    .ok { color: #4ade80; }
+    .fail { color: #f87171; }
+    .info { color: #94a3b8; font-size: 0.9rem; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>Realtime Chat</h1>
+    <p class="status" id="status">Checking connection...</p>
+    <p class="info" id="info"></p>
+  </div>
+
+  <script>
+    // Step 1 check: ask the server's /api/health endpoint and measure the round-trip time.
+    async function checkServer() {
+      const statusEl = document.getElementById('status');
+      const infoEl = document.getElementById('info');
+      const start = performance.now();
+      try {
+        const res = await fetch('/api/health');
+        const data = await res.json();
+        const rtt = (performance.now() - start).toFixed(1);
+        statusEl.textContent = 'Connected to server';
+        statusEl.className = 'status ok';
+        infoEl.textContent = `Your IP: ${data.yourIP} · Round-trip: ${rtt} ms`;
+      } catch (err) {
+        statusEl.textContent = 'Cannot reach server';
+        statusEl.className = 'status fail';
+        infoEl.textContent = err.message;
+      }
+    }
+    checkServer();
+  </script>
+</body>
+</html>
