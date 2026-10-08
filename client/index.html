@@ -25,6 +25,7 @@
     h2 { font-size: 1rem; margin: 0 0 8px; color: #94a3b8; }
     .ok { color: #4ade80; }
     .fail { color: #f87171; }
+    .pending { color: #fbbf24; }
     .info { color: #94a3b8; font-size: 0.85rem; }
     form { display: flex; gap: 8px; }
     input, select, button {
@@ -34,6 +35,8 @@
     input { flex: 1; }
     button { background: #2563eb; border: none; cursor: pointer; }
     button:disabled { opacity: 0.5; }
+    .row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+    .row button { background: #334155; font-size: 0.85rem; }
     #users { list-style: none; padding: 0; margin: 0; display: flex; flex-wrap: wrap; gap: 6px; }
     #users li { background: #334155; border-radius: 999px; padding: 4px 10px; font-size: 0.9rem; }
     #users li.me { background: #166534; }
@@ -43,6 +46,9 @@
     #messages { max-height: 40vh; }
     #messages li { padding: 4px 0; border-bottom: 1px solid #334155; overflow-wrap: anywhere; }
     #messages .meta { color: #94a3b8; font-size: 0.75rem; }
+    #messages .meta.ok { color: #4ade80; }
+    #messages .meta.pending { color: #fbbf24; }
+    #messages .meta.fail { color: #f87171; }
     #frames { max-height: 30vh; font-family: ui-monospace, monospace; font-size: 0.75rem; }
     #frames li { padding: 2px 0; overflow-wrap: anywhere; }
     .out { color: #93c5fd; }
@@ -53,7 +59,8 @@
 <body>
   <div class="card">
     <h1>Realtime Chat</h1>
-    <p class="info">Connection: <span id="status">connecting…</span></p>
+    <p class="info">Connection: <span id="status">connecting…</span><br>
+      last seq: <span id="lastSeq">0</span> · waiting for ACK: <span id="pendingCount">0</span></p>
 
     <form id="joinForm">
       <input id="username" placeholder="Choose a username (letters, digits, _)" maxlength="20" autocomplete="off">
@@ -62,7 +69,7 @@
   </div>
 
   <div class="card hidden" id="chat">
-    <h2>Online</h2>
+    <h2>Users <span class="info">(● online, ○ offline)</span></h2>
     <ul id="users"></ul>
   </div>
 
@@ -74,6 +81,11 @@
       <input id="text" placeholder="Message" maxlength="2000" autocomplete="off">
       <button>Send</button>
     </form>
+    <!-- Step 3 demo buttons: show reconnect + offline sync and server-side dedup live. -->
+    <div class="row">
+      <button type="button" id="dropBtn">Drop connection</button>
+      <button type="button" id="dupBtn">Re-send last message (same id)</button>
+    </div>
   </div>
 
   <div class="card">
@@ -86,88 +98,115 @@
   </div>
 
   <script src="/protocols/chatproto.js"></script>
+  <script src="/chat-client.js"></script>
   <script>
-    // Minimal ChatProto v1 client (the full mobile UI comes in Step 4).
-    const { TYPES } = ChatProto;
+    // Minimal UI on top of ChatClient (the full mobile UI comes in Step 4).
+    // All reliability logic (retry, dedup, reconnect, sync) lives in chat-client.js.
     const $ = id => document.getElementById(id);
 
-    let ws = null;
-    let me = null;          // our username after WELCOME
-    let online = [];        // online usernames
+    // Device token: generated once and kept in localStorage; proves "same device" when we
+    // reconnect. Storage can be blocked (private mode): then it lasts for this page only.
+    function deviceToken() {
+      try {
+        let t = localStorage.getItem('chat.token');
+        if (!t) { t = ChatProto.uuid(); localStorage.setItem('chat.token', t); }
+        return t;
+      } catch (e) { return ChatProto.uuid(); }
+    }
+    // Per-tab memory of our username, so a page reload re-joins automatically.
+    const tabStore = {
+      get(k) { try { return sessionStorage.getItem(k); } catch (e) { return null; } },
+      set(k, v) { try { sessionStorage.setItem(k, v); } catch (e) { /* ignore */ } },
+    };
+    // Outbox (sent but not yet ACKed) per user, in localStorage so it survives a reload or
+    // closing the tab while offline. Without this, a reload would lose unsent messages.
+    const outboxKey = name => `chat.outbox.${name}`;
+    function loadOutbox(name) {
+      try {
+        const saved = JSON.parse(localStorage.getItem(outboxKey(name)) || '[]');
+        // Only keep entries that are still valid ChatProto MSG frames.
+        return saved.filter(m => ChatProto.decode(ChatProto.encode(m)).ok && m.type === ChatProto.TYPES.MSG);
+      } catch (e) { return []; }
+    }
+    function saveOutbox(name, msgs) {
+      try { localStorage.setItem(outboxKey(name), JSON.stringify(msgs)); } catch (e) { /* ignore */ }
+    }
 
     // ws:// for http pages, wss:// for https pages; same host and port as the page.
     const WS_URL = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`;
+    const client = new ChatClient({ url: WS_URL, token: deviceToken() });
 
-    function connect() {
-      ws = new WebSocket(WS_URL);
-      setStatus('connecting…', '');
+    let me = null;           // our username after WELCOME
+    let online = [];         // online usernames
+    let known = [];          // every registered username (possible recipients)
+    let lastSent = null;     // for the "re-send same id" demo
+    const lines = new Map(); // id of a message we sent -> its status element
 
-      ws.onopen = () => {
-        setStatus('connected (WebSocket open)', 'ok');
-        $('joinBtn').disabled = false;
-      };
+    client.on('frame', logFrame);
+    client.on('status', (state, code) => {
+      if (state === 'open') { setStatus('connected (WebSocket open)', 'ok'); $('joinBtn').disabled = false; }
+      if (state === 'closed') { setStatus(`disconnected (code ${code})`, 'fail'); $('joinBtn').disabled = true; }
+      refreshCounters();
+    });
+    client.on('reconnecting', (delay, n) => setStatus(`reconnecting in ${(delay / 1000).toFixed(1)} s (attempt ${n})…`, 'fail'));
+    client.on('replaced', () => setStatus('you connected from another tab/device, so this one stopped', 'fail'));
 
-      ws.onmessage = (event) => {
-        logFrame('in', event.data);
-        const result = ChatProto.decode(event.data, ChatProto.SERVER_TYPES);
-        if (!result.ok) return console.warn('bad frame from server', result.error);
-        onMessage(result.msg);
-      };
-
-      ws.onclose = (event) => {
-        setStatus(`disconnected (code ${event.code})`, 'fail');
-        $('joinBtn').disabled = true;
-        me = null;
-        $('chat').classList.add('hidden');
-        $('chat2').classList.add('hidden');
-        $('joinForm').classList.remove('hidden');
-        // Step 3 adds automatic reconnect + offline sync.
-      };
-    }
-
-    function onMessage(msg) {
-      switch (msg.type) {
-        case TYPES.WELCOME:
-          me = msg.body.username;
-          online = msg.body.users;
-          $('joinForm').classList.add('hidden');
-          $('chat').classList.remove('hidden');
-          $('chat2').classList.remove('hidden');
-          setStatus(`connected as ${me}`, 'ok');
-          renderUsers();
-          break;
-        case TYPES.USERS:
-          online = msg.body.users;
-          renderUsers();
-          break;
-        case TYPES.PRESENCE:
-          if (msg.body.status === 'online') online = [...new Set([...online, msg.body.username])].sort();
-          else online = online.filter(u => u !== msg.body.username);
-          renderUsers();
-          addLine(`${msg.body.username} is ${msg.body.status}`, '');
-          break;
-        case TYPES.MSG:
-          addLine(msg.body, `${msg.from} → ${msg.to} · ${new Date(msg.ts).toLocaleTimeString()}`);
-          break;
-        case TYPES.ACK:
-          addLine(`✓ ${msg.body.status}`, `ack for ${msg.body.ref.slice(0, 8)}`);
-          break;
-        case TYPES.ERROR:
-          addLine(`${msg.body.code}: ${msg.body.message}`, 'error', true);
-          break;
+    client.on('welcome', body => {
+      me = body.username;
+      online = body.users;
+      known = body.known;
+      tabStore.set('chat.username', me);
+      $('joinForm').classList.add('hidden');
+      $('chat').classList.remove('hidden');
+      $('chat2').classList.remove('hidden');
+      setStatus(`connected as ${me}`, 'ok');
+      renderUsers();
+      // Put back messages a previous page load could not get ACKed; ChatClient re-sends them
+      // after SYNCED. This runs before the replayed history arrives, so their ids count as seen.
+      const saved = loadOutbox(me).filter(m => !client.pending.has(m.id));
+      client.restore(saved);
+      for (const m of saved) {
+        addLine(m.body, `${me} → ${m.to} · ${new Date(m.ts).toLocaleTimeString()} · from before reload`, false, m.id);
       }
-    }
+    });
+    client.on('outbox', msgs => { if (me) saveOutbox(me, msgs); });
+    client.on('synced', body => {
+      if (body.count) logNote(`offline sync: ${body.count} message(s) replayed, up to seq ${body.lastSeq}`);
+      refreshCounters();
+    });
+    client.on('users', body => { online = body.users; known = body.known; renderUsers(); });
+    client.on('presence', body => {
+      if (body.status === 'online') {
+        online = [...new Set([...online, body.username])].sort();
+        known = [...new Set([...known, body.username])].sort();
+      } else {
+        online = online.filter(u => u !== body.username);
+      }
+      renderUsers();
+      addLine(`${body.username} is ${body.status}`, '');
+    });
 
-    function send(msg) {
-      const text = ChatProto.encode(msg);
-      logFrame('out', text);
-      ws.send(text);
-      return msg;
-    }
+    client.on('message', msg => {
+      addLine(msg.body, `${msg.from} → ${msg.to} · ${new Date(msg.ts).toLocaleTimeString()} · seq ${msg.seq}`);
+      refreshCounters();
+    });
+    client.on('duplicate', msg => { logNote(`duplicate ${msg.id.slice(0, 8)} (seq ${msg.seq}) ignored`); refreshCounters(); });
+    client.on('retry', (msg, n) => setLineStatus(msg.id, `⏳ no ACK yet, sending again (try ${n})`, 'pending'));
+    client.on('ack', (body, msg) => {
+      if (msg) setLineStatus(body.ref, `✓ ${body.status} · seq ${body.seq}`, 'ok');
+      else logNote(`ACK again for ${body.ref.slice(0, 8)}: ${body.status}, seq ${body.seq}`);
+      refreshCounters();
+    });
+    client.on('serverError', (body, msg) => {
+      if (msg) setLineStatus(msg.id, `✗ ${body.code}: ${body.message}`, 'fail');
+      else addLine(`${body.code}: ${body.message}`, 'error', true);
+      if (body.code === 'NAME_TAKEN') tabStore.set('chat.username', '');
+      refreshCounters();
+    });
 
     $('joinForm').onsubmit = (e) => {
       e.preventDefault();
-      send(ChatProto.make(TYPES.HELLO, { body: { username: $('username').value.trim() } }));
+      client.join($('username').value.trim());
     };
 
     $('sendForm').onsubmit = (e) => {
@@ -175,38 +214,45 @@
       const to = $('to').value;
       const body = $('text').value;
       if (!to || !body.trim()) return;
-      send(ChatProto.make(TYPES.MSG, { to, body }));
-      addLine(body, `${me} → ${to} · ${new Date().toLocaleTimeString()}`);
+      lastSent = client.send(to, body);
+      addLine(body, `${me} → ${to} · ${new Date().toLocaleTimeString()}`, false, lastSent.id);
+      if (!client.joined) setLineStatus(lastSent.id, '⏳ offline, will send after reconnect', 'pending');
       $('text').value = '';
+      refreshCounters();
     };
+
+    $('dropBtn').onclick = () => client.dropConnection('demo: dropped by user');
+    // Sends the exact same frame again: the server must answer "duplicate" and NOT deliver it twice.
+    $('dupBtn').onclick = () => { if (lastSent) client.sendFrame(lastSent); };
 
     // Lets us send malformed frames on purpose to show the server's ERROR replies.
     $('rawForm').onsubmit = (e) => {
       e.preventDefault();
-      if (!ws || ws.readyState !== WebSocket.OPEN) return;
-      logFrame('out', $('raw').value);
-      ws.send($('raw').value);
+      client.sendFrame($('raw').value);
     };
 
     function renderUsers() {
       const list = $('users');
       list.replaceChildren();
-      for (const u of online) {
+      for (const u of known) {
         const li = document.createElement('li');
-        li.textContent = u === me ? `${u} (you)` : u;
+        li.textContent = `${u === me ? `${u} (you)` : u} ${online.includes(u) ? '●' : '○'}`;
         if (u === me) li.className = 'me';
         list.append(li);
       }
-      // Recipient picker: everyone except ourselves; keep the current choice if still online.
+      // Recipient picker: everyone ever registered except ourselves (offline users get it later).
       const select = $('to');
       const previous = select.value;
       select.replaceChildren();
-      for (const u of online.filter(u => u !== me)) select.append(new Option(u, u));
-      if (online.includes(previous)) select.value = previous;
+      for (const u of known.filter(u => u !== me)) {
+        select.append(new Option(online.includes(u) ? u : `${u} (offline)`, u));
+      }
+      if (known.includes(previous)) select.value = previous;
     }
 
     // textContent (never innerHTML) so a message cannot inject HTML/JS into the page.
-    function addLine(text, meta, isError) {
+    // `id` (our own sent messages only) adds a status line that ACK / retry events update.
+    function addLine(text, meta, isError, id) {
       const li = document.createElement('li');
       const body = document.createElement('div');
       body.textContent = text;
@@ -215,16 +261,41 @@
       m.className = 'meta';
       m.textContent = meta;
       li.append(body, m);
+      if (id) {
+        const s = document.createElement('div');
+        s.className = 'meta pending';
+        s.textContent = '⏳ waiting for ACK…';
+        li.append(s);
+        lines.set(id, s);
+      }
       $('messages').append(li);
       $('messages').scrollTop = $('messages').scrollHeight;
     }
 
+    function setLineStatus(id, text, cls) {
+      const s = lines.get(id);
+      if (!s) return;
+      s.textContent = text;
+      s.className = `meta ${cls}`;
+    }
+
     function logFrame(dir, text) {
+      logItem(dir, `${dir === 'out' ? '↑' : '↓'} ${text}`);
+    }
+    function logNote(text) {
+      logItem('info', `• ${text}`);
+    }
+    function logItem(cls, text) {
       const li = document.createElement('li');
-      li.className = dir;
-      li.textContent = `${dir === 'out' ? '↑' : '↓'} ${text}`;
+      li.className = cls;
+      li.textContent = text;
       $('frames').append(li);
       $('frames').scrollTop = $('frames').scrollHeight;
+    }
+
+    function refreshCounters() {
+      $('lastSeq').textContent = client.lastSeq;
+      $('pendingCount').textContent = client.pending.size;
     }
 
     function setStatus(text, cls) {
@@ -232,7 +303,11 @@
       $('status').className = cls;
     }
 
-    connect();
+    // After a reload of this tab, re-join automatically. lastSeq starts at 0 again, so the
+    // server replays this user's whole history from the database.
+    const savedName = tabStore.get('chat.username');
+    if (savedName) client.join(savedName);
+    client.connect();
   </script>
 </body>
 </html>

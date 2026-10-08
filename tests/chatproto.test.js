@@ -62,8 +62,10 @@ test('rejects bad header fields', () => {
   assert.equal(decodeObj({ ...validMsg(), ts: 'now' }).error.code, ERRORS.BAD_FIELD);
 });
 
+const TOKEN = 'test-token-0123456789';
+
 test('validates HELLO usernames', () => {
-  const hello = username => decodeObj(ChatProto.make(TYPES.HELLO, { body: { username } }));
+  const hello = username => decodeObj(ChatProto.make(TYPES.HELLO, { body: { username, token: TOKEN } }));
   assert.equal(hello('alice_2').ok, true);
   assert.equal(hello('').error.code, ERRORS.BAD_FIELD);
   assert.equal(hello('has space').error.code, ERRORS.BAD_FIELD);
@@ -71,11 +73,36 @@ test('validates HELLO usernames', () => {
   assert.equal(decodeObj(ChatProto.make(TYPES.HELLO, {})).error.code, ERRORS.BAD_FIELD);
 });
 
+test('validates HELLO token and lastSeq', () => {
+  const hello = body => decodeObj(ChatProto.make(TYPES.HELLO, { body: { username: 'alice', ...body } }));
+  assert.equal(hello({ token: TOKEN }).ok, true);
+  assert.equal(hello({ token: TOKEN, lastSeq: 0 }).ok, true);
+  assert.equal(hello({ token: TOKEN, lastSeq: 42 }).ok, true);
+  assert.equal(hello({}).error.code, ERRORS.BAD_FIELD);                  // token required
+  assert.equal(hello({ token: 'short' }).error.code, ERRORS.BAD_FIELD);
+  assert.equal(hello({ token: TOKEN, lastSeq: -1 }).error.code, ERRORS.BAD_FIELD);
+  assert.equal(hello({ token: TOKEN, lastSeq: 1.5 }).error.code, ERRORS.BAD_FIELD);
+  assert.equal(hello({ token: TOKEN, lastSeq: '3' }).error.code, ERRORS.BAD_FIELD);
+});
+
+test('validates ACK seq and SYNCED', () => {
+  const ack = body => decodeObj(ChatProto.make(TYPES.ACK, { body }), ChatProto.SERVER_TYPES);
+  assert.equal(ack({ ref: 'x', seq: 7, status: 'stored' }).ok, true);
+  assert.equal(ack({ ref: 'x', status: 'stored' }).error.code, ERRORS.BAD_FIELD);
+  const synced = body => decodeObj(ChatProto.make(TYPES.SYNCED, { body }), ChatProto.SERVER_TYPES);
+  assert.equal(synced({ count: 3, lastSeq: 9 }).ok, true);
+  assert.equal(synced({ count: 3 }).error.code, ERRORS.BAD_FIELD);
+  // SYNCED is server -> client only.
+  assert.equal(decodeObj(ChatProto.make(TYPES.SYNCED, { body: { count: 0, lastSeq: 0 } })).error.code, ERRORS.BAD_TYPE);
+});
+
 test('validates MSG to/body', () => {
   assert.equal(decodeObj({ ...validMsg(), to: undefined }).error.code, ERRORS.BAD_FIELD);
   assert.equal(decodeObj({ ...validMsg(), body: '   ' }).error.code, ERRORS.BAD_FIELD);
   assert.equal(decodeObj({ ...validMsg(), body: { text: 'hi' } }).error.code, ERRORS.BAD_FIELD);
   assert.equal(decodeObj({ ...validMsg(), body: 'x'.repeat(ChatProto.MAX_BODY_CHARS + 1) }).error.code, ERRORS.BAD_FIELD);
+  assert.equal(decodeObj({ ...validMsg(), seq: 5 }, ChatProto.SERVER_TYPES).ok, true);
+  assert.equal(decodeObj({ ...validMsg(), seq: -5 }, ChatProto.SERVER_TYPES).error.code, ERRORS.BAD_FIELD);
 });
 
 test('decodes server messages with SERVER_TYPES', () => {

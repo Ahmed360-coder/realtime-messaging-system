@@ -1,6 +1,7 @@
 // WebSocket transport: speaks ChatProto v1 over WebSocket frames and hands
 // valid messages to the hub. Framing/validation lives in protocols/chatproto.js,
-// routing lives in server/core/hub.js; this file only connects the two.
+// routing lives in server/core/hub.js, storage in server/core/store.js;
+// this file only connects them.
 
 const { WebSocketServer, WebSocket } = require('ws');
 const ChatProto = require('../../protocols/chatproto');
@@ -30,6 +31,7 @@ function attachWebSocket(httpServer, hub, { path = '/ws', log = () => {} } = {})
       username: null,
       protocol: 'ws',
       deliver: msg => send(ws, msg),
+      close: (code, reason) => ws.close(code, reason),
     };
 
     ws.isAlive = true;
@@ -46,7 +48,13 @@ function attachWebSocket(httpServer, hub, { path = '/ws', log = () => {} } = {})
         send(ws, ChatProto.error(result.error.code, result.error.message, result.error.ref));
         return;
       }
-      handle(ws, session, result.msg, hub);
+      try {
+        handle(ws, session, result.msg, hub);
+      } catch (err) {
+        // E.g. the database could not write. Send no ACK: the client keeps the message
+        // pending and retries, which is exactly right when storing failed.
+        log(`ws error handling ${result.msg.type} from ${session.username || remote}: ${err.message}`);
+      }
     });
 
     // Fires once however the connection ends (close frame, timeout, crash). Only this
@@ -82,17 +90,22 @@ function handle(ws, session, msg, hub) {
 
   switch (msg.type) {
     case TYPES.HELLO: {
-      const res = hub.join(session, msg.body.username);
-      if (!res.ok) return send(ws, ChatProto.error(res.code, `cannot join as "${msg.body.username}"`, msg.id));
-      return send(ws, ChatProto.make(TYPES.WELCOME, { body: { username: session.username, users: res.users } }));
+      const res = hub.join(session, msg.body);
+      if (!res.ok) return send(ws, ChatProto.error(res.code, res.message, msg.id));
+      send(ws, ChatProto.make(TYPES.WELCOME, { body: { username: session.username, users: res.users, known: res.known } }));
+      // Offline sync: replay what this client missed, then tell it the replay is complete.
+      // Same synchronous turn as join(), so nothing else can be delivered in between.
+      const synced = hub.sync(session, msg.body.lastSeq || 0);
+      return send(ws, ChatProto.make(TYPES.SYNCED, { body: synced }));
     }
     case TYPES.MSG: {
+      // The hub stores the message (or recognises a retry) BEFORE we send the ACK.
       const res = hub.sendDirect(session, msg);
-      if (!res.ok) return send(ws, ChatProto.error(res.code, `"${msg.to}" is not online`, msg.id));
-      return send(ws, ChatProto.make(TYPES.ACK, { body: { ref: msg.id, status: res.status } }));
+      if (!res.ok) return send(ws, ChatProto.error(res.code, res.message, msg.id));
+      return send(ws, ChatProto.make(TYPES.ACK, { body: { ref: msg.id, seq: res.seq, status: res.status } }));
     }
     case TYPES.LIST:
-      return send(ws, ChatProto.make(TYPES.USERS, { body: { users: hub.onlineUsers() } }));
+      return send(ws, ChatProto.make(TYPES.USERS, { body: { users: hub.onlineUsers(), known: hub.knownUsers() } }));
   }
 }
 
