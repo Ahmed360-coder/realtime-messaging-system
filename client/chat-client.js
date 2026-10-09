@@ -26,13 +26,17 @@
      * url:           ws://host:port/ws
      * token:         random secret that ties our username to this device
      * WebSocket:     constructor to use (the browser's, or require('ws') in Node)
+     * openSocket:    optional () => socket, for another protocol (Step 5: () => new MqttSocket(url)).
+     *                The socket must look like a WebSocket: readyState, send, close, onopen,
+     *                onmessage, onclose. Default: new WebSocket(url).
      * ackTimeoutMs:  how long to wait for an ACK before re-sending
      * maxMissedAcks: after this many unanswered sends, assume the connection is dead and reconnect
      * backoffMinMs / backoffMaxMs: reconnect delay grows 0.5 s, 1 s, 2 s ... up to the max
      */
-    constructor({ url, token, WebSocket = globalThis.WebSocket,
+    constructor({ url, token, WebSocket = globalThis.WebSocket, openSocket = null,
                   ackTimeoutMs = 3000, maxMissedAcks = 3, backoffMinMs = 500, backoffMaxMs = 10000 }) {
       Object.assign(this, { url, token, WebSocket, ackTimeoutMs, maxMissedAcks, backoffMinMs, backoffMaxMs });
+      this.openSocket = openSocket || (() => new this.WebSocket(this.url));
       this.ws = null;
       this.username = null;    // wanted username; remembered so reconnects re-join automatically
       this.helloId = null;     // id of our last HELLO, to recognise an ERROR reply to it
@@ -53,9 +57,11 @@
     connect() {
       this.stopped = false;
       clearTimeout(this.reconnectTimer);
-      const ws = new this.WebSocket(this.url);
+      const ws = this.openSocket();
       this.ws = ws;
       this.emit('status', 'connecting');
+      // MQTT only: its control packets (CONNECT, SUBACK, PUBACK ...) go to the frame log too.
+      if ('ontrace' in ws) ws.ontrace = (dir, text) => { if (ws === this.ws) this.emit('frame', dir, text); };
       ws.onopen = () => {
         if (ws !== this.ws) return;
         this.emit('status', 'open');
@@ -191,6 +197,9 @@
 
         case TYPES.PRESENCE: return this.emit('presence', msg.body);
         case TYPES.USERS: return this.emit('users', msg.body);
+        // BYE (MQTT only): the socket adapter closes with body.code right after this frame,
+        // so it arrives here as a normal close (see onClosed).
+        case TYPES.BYE: return;
       }
     }
 

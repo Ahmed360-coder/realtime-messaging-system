@@ -9,7 +9,7 @@ CSEN 503 – Computer Networks, Winter 2026 (Instructor: Amr Saber)
 | Member | Responsibility |
 |---|---|
 | _TBD_ | Server core + WebSocket protocol |
-| _TBD_ | HTTP long-polling protocol + reliability (ACK, dedup, sync) |
+| _TBD_ | MQTT protocol + reliability (ACK, dedup, sync) |
 | _TBD_ | Mobile web client UI |
 | _TBD_ | Database, group chat, metrics + benchmarks |
 
@@ -31,8 +31,10 @@ CSEN 503 – Computer Networks, Winter 2026 (Instructor: Amr Saber)
 - Server handles many simultaneous connections; one client closing does not affect others.
 
 ### Application Layer – two protocols
-1. **Custom JSON protocol over WebSocket**: message types such as `MSG`, `ACK`, `SYNC`.
-2. **HTTP long-polling**: same chat, implemented with plain HTTP requests.
+1. **ChatProto v1 over WebSocket** (`/ws`): our own JSON protocol, request/response style.
+2. **MQTT 3.1.1 over WebSocket** (`/mqtt`, Step 5): publish/subscribe through a broker
+   (Aedes) embedded in the server. Same hub, same database: users of the two protocols chat
+   with each other.
 
 ### ChatProto v1 (Step 2, extended for reliability in Step 3)
 One JSON object per WebSocket text frame on `ws://<laptop-ip>:3000/ws`
@@ -57,6 +59,7 @@ assigned by the server when it stores the message (ordering and offline sync).
 | `PRESENCE` | server → client | `body.username`, `body.status` (`online`/`offline`) |
 | `USERS` | server → client | `body.users` (online), `body.known` (all registered) |
 | `ERROR` | server → client | `body.code`, `body.message`, `body.ref` |
+| `BYE` | server → client (MQTT only) | `body.code` (e.g. `4001`), `body.reason`: "I am closing you, this is why" |
 
 Error codes: `BAD_JSON`, `BAD_VERSION`, `BAD_TYPE`, `BAD_FIELD`, `TOO_LARGE`, `NOT_JOINED`,
 `ALREADY_JOINED`, `NAME_TAKEN` (name registered to another token), `UNKNOWN_USER`
@@ -75,11 +78,14 @@ the client page and codec from the same origin, so a client of another version c
 exist, and v1 had not been frozen or released. Bumping to v2 would add a compatibility
 branch with no client to use it.
 
-Code layout: `protocols/chatproto.js` (format) → `server/transports/websocket.js`
-(socket ↔ protocol) → `server/core/hub.js` (protocol-agnostic routing, presence, sync) →
-`server/core/store.js` (SQLite). Client side: `client/chat-client.js` (retry, dedup,
-reconnect; no UI) → `client/conversations.js` (page state; no UI) → `client/app.js` +
-`index.html` + `style.css` (the phone UI).
+Code layout: `protocols/chatproto.js` (format) and `protocols/mqtt-binding.js` (MQTT topics) →
+`server/transports/websocket.js` / `server/transports/mqtt.js` (bytes ↔ ChatProto text) →
+`server/core/dispatch.js` (the ChatProto state machine, shared by both transports) →
+`server/core/hub.js` (protocol-agnostic routing, presence, sync) → `server/core/store.js`
+(SQLite). `server/index.js` routes each WebSocket upgrade by path (`/ws` or `/mqtt`).
+Client side: `client/mqtt-socket.js` (an MQTT connection that looks like a WebSocket) →
+`client/chat-client.js` (retry, dedup, reconnect; no UI) → `client/conversations.js`
+(page state; no UI) → `client/app.js` + `index.html` + `style.css` (the phone UI).
 
 ### Reliability (implemented in Step 3)
 TCP only guarantees delivery between two kernels while one connection lives; it cannot
@@ -137,6 +143,84 @@ Plain HTML/CSS/JS served from `client/` (no framework, no build step), designed 
 - **Debug panel** (`{ }` button, for the demo): raw frame log, `lastSeq`, outbox size,
   *Drop connection*, *Re-send last (same id)*, raw-frame input.
 
+### MQTT – the second protocol (Step 5)
+MQTT is a publish/subscribe protocol: clients never address each other, they **publish** to a
+named **topic**, and a **broker** forwards the message to every client that **subscribed** to it.
+It is binary (2–5 byte fixed header) with these packets: `CONNECT`/`CONNACK`,
+`SUBSCRIBE`/`SUBACK`, `PUBLISH`/`PUBACK`, `PINGREQ`/`PINGRESP`, `DISCONNECT`.
+
+**Stack.** Browser: [mqtt.js](https://github.com/mqttjs/MQTT.js), served by our own server at
+`/vendor/mqtt.min.js` (phones need no internet). Server: the [Aedes](https://github.com/moscajs/aedes)
+broker, embedded in the same Node process. Browsers cannot open raw TCP sockets, so MQTT runs
+**over WebSocket** (binary frames, subprotocol `mqtt`): TCP → HTTP Upgrade → WebSocket → MQTT →
+ChatProto JSON payload.
+
+**Topics** (`protocols/mqtt-binding.js`). Each connection uses a fresh random client id
+`c-<32 hex>` and exactly two topics:
+
+| Topic | Direction | Payload |
+|---|---|---|
+| `chat/<clientId>/up` | client → server | ChatProto `HELLO` / `MSG` / `LIST` |
+| `chat/<clientId>/down` | server → client | ChatProto `WELCOME` / `SYNCED` / `MSG` / `ACK` / `PRESENCE` / `USERS` / `ERROR` / `BYE` |
+
+The payload of each PUBLISH is exactly one ChatProto JSON object, the same text a WebSocket
+frame carries. Clients never publish to each other's topics: the hub must store the message,
+give it a `seq` and check the sender before anyone receives it, and a WebSocket user could not
+receive it otherwise. So the server is the only reader of `up` topics and the only writer of
+`down` topics. Topics are per **connection**, not per user, so two tabs of one user never see
+each other's traffic.
+
+**Access rules** (Aedes hooks in `server/transports/mqtt.js`):
+- `authenticate` (CONNECT): the client id must match `c-<32 hex>` and must not already be
+  connected, otherwise CONNACK return code 2. (MQTT would let a newer connection with the same
+  id take over the old one; with per-connection topics that would be a hijack.)
+- `authorizeSubscribe`: only your own `down` topic. Another connection's topic or a
+  wildcard (`chat/+/down`, `chat/#`, `#`) gets SUBACK `128` (refused).
+- `authorizePublish`: only your own `up` topic, not retained; it is handed to the ChatProto
+  state machine. Anything else closes the connection (MQTT 3.1.1 cannot refuse a single
+  PUBLISH). Aedes calls this hook **before** it sends the PUBACK, so the message is in SQLite first.
+
+**Login** stays the ChatProto `HELLO` (sent as the first PUBLISH after SUBACK). Both protocols
+share one join path and get the same errors (`NAME_TAKEN` …). MQTT's username/password fields
+are not used.
+
+**MQTT reliability features – what we use and why**
+
+| Feature | Used? | Why |
+|---|---|---|
+| QoS 0 (at most once) | no | can lose messages |
+| **QoS 1** (at least once, PUBACK) | **yes, both directions** | duplicates are removed by our ChatProto `id` dedup, end to end |
+| QoS 2 (exactly once, 4 packets) | no | only per hop and per connection: after a reconnect our client re-sends in a *new* MQTT session, which QoS 2 cannot recognise. Twice the packets for nothing |
+| PUBACK as delivery receipt | no | it only means "broker received". Our `ACK` says "stored in SQLite, seq 42, delivered/stored" |
+| Retained messages | no | a topic keeps only its **last** message (history would be lost) and it is re-sent on every subscribe. Presence comes from the hub |
+| **Clean session** (`clean=true`) | **yes** | a persistent session would be a second offline queue (in Aedes memory, lost on restart, MQTT only). SQLite + `lastSeq` sync already does this for both protocols |
+| Last Will (LWT) | no | the broker *is* our server: Aedes' `clientDisconnect` event tells the hub about every disconnect (DISCONNECT, socket closed, keepalive timeout) |
+| **Keepalive** 30 s | **yes** | the client sends `PINGREQ` when idle; the broker drops a client silent for 1.5 × 30 s. It replaces our own WebSocket ping heartbeat |
+
+**Closing with a reason (`BYE`).** A WebSocket close frame carries a code (`4001` = replaced),
+but an MQTT 3.1.1 broker cannot tell a client why it disconnects it. So before closing a replaced
+MQTT session the server publishes `BYE {code: 4001}`. The client then closes with that code
+itself (the server cuts the connection after 2 s if it does not). ChatClient sees an ordinary
+close with code 4001 and does not reconnect.
+
+**Client side.** `client/mqtt-socket.js` makes an mqtt.js connection look like a WebSocket:
+open = CONNACK + SUBACK, `send(text)` = PUBLISH QoS 1 to `up`, message = PUBLISH on `down`,
+close = DISCONNECT. ChatClient takes an `openSocket` option and is otherwise unchanged, so the
+outbox, retries, dedup, `lastSeq` sync and backoff reconnect are the same code for both
+protocols. mqtt.js' own auto-reconnect is switched off (one reconnect policy only). On the join
+screen the user picks **WebSocket** or **MQTT**, remembered per tab. The debug panel also lists
+every MQTT packet (`CONNECT`, `SUBACK`, `PUBLISH … id=7`, `PUBACK id=7` …).
+
+**Preparing the Step 9 comparison** (cost of one chat message, per direction):
+
+| | ChatProto over WebSocket | ChatProto over MQTT over WebSocket |
+|---|---|---|
+| Connection setup | TCP + HTTP Upgrade, then `HELLO` → `WELCOME` | TCP + HTTP Upgrade + `CONNECT`/`CONNACK` + `SUBSCRIBE`/`SUBACK`, then `HELLO` → `WELCOME` (2 extra round trips) |
+| Per message on the wire | WS header (2–8 B) + JSON | WS header + MQTT header (1 B + 2 B length) + topic (2 + 42–44 B) + packet id (2 B) + JSON: ≈ 50 B more |
+| Per-hop receipts | none (TCP only) | `PUBACK` (4 B + WS header) for every PUBLISH, both directions |
+| End-to-end receipt | ChatProto `ACK` | ChatProto `ACK` (the same) |
+| Dead-peer detection | server ping every 30 s | client `PINGREQ` after 30 s idle, broker timeout 45 s |
+
 ### Additional Features (planned)
 - Group chat.
 
@@ -145,7 +229,7 @@ Plain HTML/CSS/JS served from `client/` (no framework, no build step), designed 
 
 ## Performance Evaluation (planned)
 - Latency (average sender → recipient time).
-- Protocol comparison: WebSocket vs HTTP long-polling.
+- Protocol comparison: ChatProto over WebSocket vs MQTT over WebSocket (see the table in Step 5).
 - Scalability or Wi-Fi distance (near vs far).
 
 ## Repository Structure
@@ -164,7 +248,7 @@ docs/        design document and diagrams
 - [x] Step 2 – ChatProto v1: custom protocol over WebSocket
 - [x] Step 3 – Reliability: SQLite storage, ACKs, deduplication, offline sync
 - [x] Step 4 – Mobile chat UI
-- [ ] Step 5 – MQTT: second application-layer protocol
+- [x] Step 5 – MQTT: second application-layer protocol
 - [ ] Step 6 – Live metrics dashboard
 - [ ] Step 7 – Group chat
 - [ ] Step 8 – End-to-end encryption
@@ -180,6 +264,10 @@ npm install
 npm start
 npm test        # unit + integration tests
 ```
+
+`PORT` and `DB_PATH` run a second copy without touching the real database, e.g.
+`PORT=3105 DB_PATH=/tmp/test.db npm start` (bash) or
+`$env:PORT=3105; $env:DB_PATH="$env:TEMP\test.db"; npm start` (PowerShell).
 
 The server prints its Wi-Fi address and a QR code. Open that address on a phone connected
 to the same Wi-Fi. If the phone cannot connect, allow Node.js through Windows Firewall

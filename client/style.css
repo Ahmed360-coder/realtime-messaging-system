@@ -125,6 +125,17 @@ button { cursor: pointer; }
   min-width: 0;
 }
 .hint { margin: 0; color: var(--muted); font-size: 0.85rem; }
+/* Protocol choice: two big radio rows (whole row is the tap target). */
+.protocol { margin: 8px 0 0; padding: 0; border: none; display: flex; flex-direction: column; gap: 6px; }
+.protocol legend { font-weight: 600; padding: 0; margin-bottom: 6px; }
+.join-form .protocol label {
+  display: flex; align-items: center; gap: 10px; margin: 0;
+  min-height: var(--tap); padding: 0 14px;
+  border: 1px solid var(--surface-2); border-radius: 12px; background: var(--bg);
+}
+.join-form .protocol label:has(input:checked) { border-color: var(--accent); }
+.join-form .protocol input { min-height: 0; width: 20px; height: 20px; margin: 0; accent-color: var(--accent); }
+.protocol .hint { margin-left: auto; font-weight: 400; }
 .error { margin: 0; min-height: 1.2em; color: var(--danger); font-size: 0.9rem; }
 .primary {
   min-height: var(--tap); border: none; border-radius: 12px;

@@ -1,8 +1,8 @@
 // Message core ("hub"): who is online and where messages go.
 // It is protocol-agnostic: it never touches a socket or parses a frame. Each transport
-// (WebSocket now, MQTT in Step 5) wraps a connection in a "session" and calls the hub:
+// (server/transports: WebSocket, MQTT) wraps a connection in a "session" and calls the hub:
 //
-//   session = { username: null, protocol: 'ws',
+//   session = { username: null, protocol: 'ws' | 'mqtt',
 //               deliver(msg) { ...encode + send... },
 //               close(code, reason) { ...close the connection... } }
 //

@@ -1,23 +1,24 @@
 // WebSocket transport: speaks ChatProto v1 over WebSocket frames and hands
 // valid messages to the hub. Framing/validation lives in protocols/chatproto.js,
-// routing lives in server/core/hub.js, storage in server/core/store.js;
-// this file only connects them.
+// the ChatProto state machine in server/core/dispatch.js (shared with MQTT), routing in
+// server/core/hub.js, storage in server/core/store.js; this file only connects them.
 
 const { WebSocketServer, WebSocket } = require('ws');
 const ChatProto = require('../../protocols/chatproto');
-const { TYPES, ERRORS } = ChatProto;
+const { handleFrame } = require('../core/dispatch');
+const { ERRORS } = ChatProto;
 
 const HEARTBEAT_MS = 30_000; // how often we ping to detect dead connections
 
 /**
- * Attach a WebSocket endpoint to an existing HTTP server.
- * Browsers connect with new WebSocket('ws://<host>:<port>/ws'); the ws library
- * answers the HTTP Upgrade request with "101 Switching Protocols".
+ * Create the ChatProto WebSocket endpoint. Browsers connect with
+ * new WebSocket('ws://<host>:<port>/ws'); server/index.js passes us the HTTP Upgrade
+ * requests for that path and the ws library answers "101 Switching Protocols".
  */
-function attachWebSocket(httpServer, hub, { path = '/ws', log = () => {} } = {}) {
+function createWebSocketEndpoint(hub, { log = () => {} } = {}) {
   const wss = new WebSocketServer({
-    server: httpServer,
-    path,
+    // noServer: index.js decides which endpoint gets an upgrade (/ws here, /mqtt for MQTT).
+    noServer: true,
     // Frames bigger than this are refused and the socket is closed with code 1009 (too big).
     maxPayload: ChatProto.MAX_FRAME_BYTES,
   });
@@ -30,6 +31,7 @@ function attachWebSocket(httpServer, hub, { path = '/ws', log = () => {} } = {})
     const session = {
       username: null,
       protocol: 'ws',
+      label: remote,
       deliver: msg => send(ws, msg),
       close: (code, reason) => ws.close(code, reason),
     };
@@ -42,19 +44,7 @@ function attachWebSocket(httpServer, hub, { path = '/ws', log = () => {} } = {})
         send(ws, ChatProto.error(ERRORS.BAD_JSON, 'binary frames are not supported, send JSON text'));
         return;
       }
-      const result = ChatProto.decode(data.toString('utf8'), ChatProto.CLIENT_TYPES);
-      if (!result.ok) {
-        log(`ws bad frame from ${session.username || remote}: ${result.error.code} ${result.error.message}`);
-        send(ws, ChatProto.error(result.error.code, result.error.message, result.error.ref));
-        return;
-      }
-      try {
-        handle(ws, session, result.msg, hub);
-      } catch (err) {
-        // E.g. the database could not write. Send no ACK: the client keeps the message
-        // pending and retries, which is exactly right when storing failed.
-        log(`ws error handling ${result.msg.type} from ${session.username || remote}: ${err.message}`);
-      }
+      handleFrame(hub, session, data.toString('utf8'), log);
     });
 
     // Fires once however the connection ends (close frame, timeout, crash). Only this
@@ -81,37 +71,9 @@ function attachWebSocket(httpServer, hub, { path = '/ws', log = () => {} } = {})
   return wss;
 }
 
-// Protocol state machine for one valid message from one client.
-function handle(ws, session, msg, hub) {
-  // Before HELLO only HELLO is allowed.
-  if (!session.username && msg.type !== TYPES.HELLO) {
-    return send(ws, ChatProto.error(ERRORS.NOT_JOINED, 'send HELLO first', msg.id));
-  }
-
-  switch (msg.type) {
-    case TYPES.HELLO: {
-      const res = hub.join(session, msg.body);
-      if (!res.ok) return send(ws, ChatProto.error(res.code, res.message, msg.id));
-      send(ws, ChatProto.make(TYPES.WELCOME, { body: { username: session.username, users: res.users, known: res.known } }));
-      // Offline sync: replay what this client missed, then tell it the replay is complete.
-      // Same synchronous turn as join(), so nothing else can be delivered in between.
-      const synced = hub.sync(session, msg.body.lastSeq || 0);
-      return send(ws, ChatProto.make(TYPES.SYNCED, { body: synced }));
-    }
-    case TYPES.MSG: {
-      // The hub stores the message (or recognises a retry) BEFORE we send the ACK.
-      const res = hub.sendDirect(session, msg);
-      if (!res.ok) return send(ws, ChatProto.error(res.code, res.message, msg.id));
-      return send(ws, ChatProto.make(TYPES.ACK, { body: { ref: msg.id, seq: res.seq, status: res.status } }));
-    }
-    case TYPES.LIST:
-      return send(ws, ChatProto.make(TYPES.USERS, { body: { users: hub.onlineUsers(), known: hub.knownUsers() } }));
-  }
-}
-
 // Encode and send, but only if the socket is still open (it may be closing).
 function send(ws, msg) {
   if (ws.readyState === WebSocket.OPEN) ws.send(ChatProto.encode(msg));
 }
 
-module.exports = { attachWebSocket };
+module.exports = { createWebSocketEndpoint };

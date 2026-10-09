@@ -2,6 +2,7 @@
 //
 // Three layers, each in its own file:
 //   chat-client.js    protocol + reliability (retry, dedup, reconnect, sync)   – no DOM
+//   mqtt-socket.js    MQTT connection that looks like a WebSocket (Step 5)      – no DOM
 //   conversations.js  what to show (messages per contact, ticks, unread)       – no DOM
 //   app.js (this)     wires ChatClient events into the state, then render()s the DOM
 //
@@ -54,8 +55,9 @@
   // ---------------------------------------------------------------------------------------
   // STATE – everything the screen shows is derived from these values.
   const state = {
-    conn: 'connecting',  // connecting | open (socket up, not joined) | joined | offline | replaced
-    retryIn: 0,          // ms until the next reconnect attempt (when offline)
+    conn: 'idle',        // idle (before Join) | connecting | open (socket up, not joined) | joined | offline | replaced
+    protocol: store.getText(session, 'chat.protocol') === 'mqtt' ? 'mqtt' : 'ws', // chosen on the join screen
+    retryIn: 0,         // ms until the next reconnect attempt (when offline)
     joining: null,       // username we asked for, until WELCOME or ERROR
     joinError: '',
     me: null,            // our username after WELCOME
@@ -71,13 +73,36 @@
   let synced = false;    // false between WELCOME and SYNCED (the offline replay)
   let replayedNew = 0;   // messages in the current replay that we did not have yet
 
-  const WS_URL = `${location.protocol === 'https:' ? 'wss' : 'ws'}://${location.host}/ws`;
-  const client = new ChatClient({ url: WS_URL, token: deviceToken() });
+  // The two protocols (Step 5). The page only chooses which socket ChatClient opens; everything
+  // else (join, retry, dedup, sync, reconnect) is the same ChatClient code for both:
+  //   ws    ChatProto JSON in WebSocket text frames on /ws
+  //   mqtt  the same ChatProto JSON as MQTT PUBLISH payloads, MQTT over WebSocket on /mqtt
+  //         (client/mqtt-socket.js makes mqtt.js look like a WebSocket)
+  const scheme = location.protocol === 'https:' ? 'wss' : 'ws';
+  const PROTOCOLS = {
+    ws: { label: 'WebSocket', open: () => new WebSocket(`${scheme}://${location.host}/ws`) },
+    mqtt: { label: 'MQTT', open: () => new MqttSocket(`${scheme}://${location.host}${MqttBinding.PATH}`) },
+  };
+
+  let client = null;     // created when the user presses Join (it depends on the chosen protocol)
+  let clientProtocol = null; // the protocol `client` speaks
+  const handlers = [];   // [event, fn] pairs, attached to every ChatClient we create
+  const on = (event, fn) => handlers.push([event, fn]);
+
+  function startClient(protocol) {
+    if (client) client.close();
+    const c = new ChatClient({ token: deviceToken(), openSocket: PROTOCOLS[protocol].open });
+    // Events from a client we already replaced (the user switched protocol) are ignored.
+    for (const [event, fn] of handlers) c.on(event, (...args) => { if (c === client) fn(...args); });
+    client = c;
+    clientProtocol = protocol;
+    return c;
+  }
 
   // ---------------------------------------------------------------------------------------
   // ChatClient events -> state changes. All protocol logic stays inside ChatClient.
 
-  client.on('status', (s, code) => {
+  on('status', (s, code) => {
     if (s === 'connecting' && state.conn === 'offline') state.retryIn = 0; // attempt running now
     if (s === 'open') state.conn = 'open';
     if (s === 'closed') {
@@ -88,16 +113,16 @@
     render();
   });
 
-  client.on('reconnecting', (delay, attempt) => {
+  on('reconnecting', (delay, attempt) => {
     state.conn = 'offline';
     state.retryIn = delay;
     logNote(`reconnecting in ${(delay / 1000).toFixed(1)} s (attempt ${attempt})`);
     render();
   });
 
-  client.on('replaced', () => { state.conn = 'replaced'; render(); });
+  on('replaced', () => { state.conn = 'replaced'; render(); });
 
-  client.on('welcome', body => {
+  on('welcome', body => {
     if (!state.conv || state.me !== body.username) {
       state.conv = new Conversations(body.username, store.get(local, `chat.read.${body.username}`, {}));
     }
@@ -118,7 +143,7 @@
     render({ scroll: true });
   });
 
-  client.on('synced', body => {
+  on('synced', body => {
     logNote(`offline sync: ${body.count} message(s) replayed, up to seq ${body.lastSeq}`);
     // body.count also includes replays we already had (ignored as duplicates); tell the
     // user only about the ones that were new to this page.
@@ -130,7 +155,7 @@
     render();
   });
 
-  client.on('message', msg => {
+  on('message', msg => {
     if (!synced) replayedNew++; // between WELCOME and SYNCED every MSG is part of the replay
     state.conv.addReceived(msg);
     if (msg.from === state.open && document.visibilityState === 'visible') markRead(state.open);
@@ -139,19 +164,19 @@
 
   // Already have this id. If it is one of ours restored from the outbox, the replay tells us
   // its seq (the server stored it before the reload).
-  client.on('duplicate', msg => {
+  on('duplicate', msg => {
     logNote(`duplicate ${msg.id.slice(0, 8)} (seq ${msg.seq}) ignored`);
     if (state.conv && state.conv.addReceived(msg)) render();
   });
 
-  client.on('retry', (msg, n) => logNote(`no ACK for ${msg.id.slice(0, 8)} yet, sending again (try ${n})`));
+  on('retry', (msg, n) => logNote(`no ACK for ${msg.id.slice(0, 8)} yet, sending again (try ${n})`));
 
-  client.on('ack', body => {
+  on('ack', body => {
     if (state.conv) state.conv.ack(body);
     render();
   });
 
-  client.on('serverError', (body, msg) => {
+  on('serverError', (body, msg) => {
     if (msg && state.conv) {
       state.conv.setStatus(msg.id, 'failed', null, body.message);
     } else if (!state.me && state.joining) {
@@ -165,7 +190,7 @@
     render();
   });
 
-  client.on('presence', body => {
+  on('presence', body => {
     if (body.status === 'online') {
       state.online.add(body.username);
       if (!state.known.includes(body.username)) state.known = [...state.known, body.username].sort();
@@ -175,11 +200,11 @@
     render();
   });
 
-  client.on('users', body => { state.online = new Set(body.users); state.known = body.known; render(); });
+  on('users', body => { state.online = new Set(body.users); state.known = body.known; render(); });
 
-  client.on('outbox', msgs => { if (state.me) store.set(local, `chat.outbox.${state.me}`, msgs); });
+  on('outbox', msgs => { if (state.me) store.set(local, `chat.outbox.${state.me}`, msgs); });
 
-  client.on('frame', (dir, text) => logLine(dir, `${dir === 'out' ? '↑' : '↓'} ${text}`));
+  on('frame', (dir, text) => logLine(dir, `${dir === 'out' ? '↑' : '↓'} ${text}`));
 
   // ---------------------------------------------------------------------------------------
   // User actions -> state changes.
@@ -193,7 +218,21 @@
     }
     state.joining = name;
     state.joinError = '';
-    client.join(name); // sent now, or as soon as the socket opens
+    if (clientProtocol !== state.protocol) {
+      startClient(state.protocol);
+      client.join(name);  // sent as soon as the connection is open
+      client.connect();
+    } else {
+      client.join(name);  // same connection (e.g. after NAME_TAKEN): sent now
+    }
+    render();
+  });
+
+  // Protocol choice on the join screen, remembered per tab (so two tabs can use different ones).
+  $('joinForm').addEventListener('change', e => {
+    if (e.target.name !== 'protocol') return;
+    state.protocol = e.target.value;
+    store.setText(session, 'chat.protocol', state.protocol);
     render();
   });
 
@@ -237,7 +276,7 @@
     if (document.visibilityState === 'visible' && state.open && markRead(state.open)) render();
   });
 
-  $('bannerAction').addEventListener('click', () => client.connect()); // "Use here" after 4001
+  $('bannerAction').addEventListener('click', () => client && client.connect()); // "Use here" after 4001
 
   // Debug panel (oral demo).
   for (const btn of document.querySelectorAll('.debug-toggle')) {
@@ -249,16 +288,16 @@
       if (state.debug) $('frames').scrollTop = $('frames').scrollHeight;
     });
   }
-  $('dropBtn').addEventListener('click', () => client.dropConnection('demo: dropped by user'));
+  $('dropBtn').addEventListener('click', () => client && client.dropConnection('demo: dropped by user'));
   // Sends the exact same frame again: the server must ACK it as "duplicate", not deliver it twice.
   $('dupBtn').addEventListener('click', () => {
-    if (lastSent) client.sendFrame(lastSent);
+    if (lastSent && client) client.sendFrame(lastSent);
     else logNote('send a message first');
   });
   $('clearLogBtn').addEventListener('click', () => $('frames').replaceChildren());
   $('rawForm').addEventListener('submit', e => {
     e.preventDefault();
-    client.sendFrame($('raw').value); // malformed on purpose -> the server answers with ERROR
+    if (client) client.sendFrame($('raw').value); // malformed on purpose -> the server answers with ERROR
   });
 
   function markRead(contact) {
@@ -292,7 +331,7 @@
   }
 
   function renderBanner() {
-    const waiting = client.pending.size;
+    const waiting = client ? client.pending.size : 0;
     const queued = waiting ? ` · ${waiting} message${waiting === 1 ? '' : 's'} waiting to send` : '';
     let text = '';
     let good = false;
@@ -321,10 +360,15 @@
     $('joinError').textContent = state.joinError;
     $('joinBtn').disabled = !!state.joining;
     $('joinBtn').textContent = state.joining ? 'Joining…' : 'Join';
+    for (const radio of $('joinForm').elements.protocol) {
+      radio.checked = radio.value === state.protocol;
+      radio.disabled = !!state.joining;
+    }
   }
 
   function renderList() {
     $('meName').textContent = state.me;
+    $('meProtocol').textContent = PROTOCOLS[clientProtocol].label;
     const rows = state.conv.contacts(state.known);
     $('noContacts').hidden = rows.length > 0;
     $('contactList').replaceChildren(...rows.map(contactRow));
@@ -408,9 +452,9 @@
       btn.setAttribute('aria-pressed', String(state.debug));
       btn.setAttribute('aria-label', state.debug ? 'Hide debug panel' : 'Show debug panel');
     }
-    $('dbgConn').textContent = `${state.conn}${state.me ? ` as ${state.me}` : ''}`;
-    $('dbgSeq').textContent = client.lastSeq;
-    $('dbgPending').textContent = client.pending.size;
+    $('dbgConn').textContent = `${clientProtocol ? PROTOCOLS[clientProtocol].label + ' · ' : ''}${state.conn}${state.me ? ` as ${state.me}` : ''}`;
+    $('dbgSeq').textContent = client ? client.lastSeq : 0;
+    $('dbgPending').textContent = client ? client.pending.size : 0;
   }
 
   // Raw frame log. Capped, so a long demo does not grow the page forever.
@@ -441,13 +485,14 @@
   }
 
   // ---------------------------------------------------------------------------------------
-  // Start: re-join automatically after a reload of this tab (username kept per tab).
+  // Start: re-join automatically after a reload of this tab (username and protocol kept per tab).
   const savedName = store.getText(session, 'chat.username');
   if (savedName) {
     state.joining = savedName;
     $('username').value = savedName;
+    startClient(state.protocol);
     client.join(savedName);
+    client.connect();
   }
   render();
-  client.connect();
 })();

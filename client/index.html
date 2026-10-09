@@ -25,12 +25,18 @@
         <button type="button" class="icon-btn debug-toggle" aria-label="Show debug panel" aria-pressed="false">{ }</button>
       </header>
       <form id="joinForm" class="join-form" novalidate>
-        <p class="hint">CSEN 503 · ChatProto v1 over WebSocket</p>
+        <p class="hint">CSEN 503 · ChatProto v1 over WebSocket or MQTT</p>
         <label for="username">Choose a username</label>
         <input id="username" name="username" maxlength="20" autocomplete="username"
                autocapitalize="off" spellcheck="false" pattern="[A-Za-z0-9_]{1,20}"
                aria-describedby="usernameHelp joinError" required>
         <p id="usernameHelp" class="hint">1–20 letters, digits or _ . The name is tied to this device.</p>
+        <!-- Step 5: the same chat over either application-layer protocol (chosen per tab). -->
+        <fieldset class="protocol">
+          <legend>Protocol</legend>
+          <label><input type="radio" name="protocol" value="ws" checked> WebSocket <span class="hint">ChatProto frames</span></label>
+          <label><input type="radio" name="protocol" value="mqtt"> MQTT <span class="hint">publish / subscribe</span></label>
+        </fieldset>
         <p id="joinError" class="error" role="alert"></p>
         <button id="joinBtn" class="primary">Join</button>
       </form>
@@ -41,7 +47,7 @@
       <header class="bar">
         <div class="bar-title">
           <h1 id="listTitle">Chats</h1>
-          <span class="subtitle">signed in as <span id="meName"></span></span>
+          <span class="subtitle">signed in as <span id="meName"></span> · <span id="meProtocol"></span></span>
         </div>
         <button type="button" class="icon-btn debug-toggle" aria-label="Show debug panel" aria-pressed="false">{ }</button>
       </header>
@@ -77,7 +83,7 @@
         <button type="button" id="dupBtn">Re-send last (same id)</button>
         <button type="button" id="clearLogBtn">Clear log</button>
       </div>
-      <ol id="frames" class="frames" aria-label="ChatProto frames (↑ sent, ↓ received)"></ol>
+      <ol id="frames" class="frames" aria-label="Frames and MQTT packets (↑ sent, ↓ received)"></ol>
       <form id="rawForm" class="composer raw">
         <label for="raw" class="sr-only">Raw frame</label>
         <input id="raw" autocomplete="off" spellcheck="false" placeholder='Raw frame, e.g. {"v":1,"type":"NOPE"}'>
@@ -86,8 +92,12 @@
     </aside>
   </div>
 
-  <!-- Order matters: the codec, then the protocol client, then the page state, then the UI. -->
+  <!-- Order matters: the codec, the MQTT library + adapter, the protocol client, then the page
+       state, then the UI. mqtt.min.js is served by our own server, so phones need no internet. -->
   <script src="/protocols/chatproto.js"></script>
+  <script src="/protocols/mqtt-binding.js"></script>
+  <script src="/vendor/mqtt.min.js"></script>
+  <script src="/mqtt-socket.js"></script>
   <script src="/chat-client.js"></script>
   <script src="/conversations.js"></script>
   <script src="/app.js"></script>

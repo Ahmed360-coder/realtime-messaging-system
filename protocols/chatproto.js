@@ -3,7 +3,8 @@
 // a ChatProto message. It knows nothing about sockets or routing, so the same file is
 // used by the Node server (require) and by the browser (<script src="/protocols/chatproto.js">).
 //
-// Wire format: one JSON object per WebSocket text frame, for example
+// Wire format: one JSON object per WebSocket text frame (or per MQTT PUBLISH payload, see
+// protocols/mqtt-binding.js), for example
 //   { "v": 1, "type": "MSG", "id": "<uuid>", "ts": 1760000000000,
 //     "from": "alice", "to": "bob", "body": "hi", "seq": 42 }
 // `id` is chosen by the sender (used for dedup); `seq` is assigned by the server when it
@@ -31,9 +32,10 @@
     PRESENCE: 'PRESENCE', // someone joined/left:    body = { username, status: 'online'|'offline' }
     USERS: 'USERS',       // online + known users:   body = { users, known }
     ERROR: 'ERROR',       // something was wrong:    body = { code, message, ref }
+    BYE: 'BYE',           // server closes us (MQTT): body = { code, reason } (see CLOSE_REPLACED)
   };
   const CLIENT_TYPES = new Set([TYPES.HELLO, TYPES.MSG, TYPES.LIST]);
-  const SERVER_TYPES = new Set([TYPES.WELCOME, TYPES.SYNCED, TYPES.MSG, TYPES.ACK, TYPES.PRESENCE, TYPES.USERS, TYPES.ERROR]);
+  const SERVER_TYPES = new Set([TYPES.WELCOME, TYPES.SYNCED, TYPES.MSG, TYPES.ACK, TYPES.PRESENCE, TYPES.USERS, TYPES.ERROR, TYPES.BYE]);
 
   // Error codes carried in ERROR.body.code.
   const ERRORS = {
@@ -51,6 +53,9 @@
   // WebSocket close code (4000-4999 = application-defined) sent to an old connection when
   // the same user reconnects on a new one. Clients must NOT auto-reconnect after it.
   const CLOSE_REPLACED = 4001;
+  // A WebSocket close frame carries such a code, but an MQTT 3.1.1 broker cannot tell a client
+  // why it is being disconnected. Over MQTT the server therefore sends BYE { code, reason }
+  // just before closing, and the client treats it like a close frame with that code.
 
   const MAX_FRAME_BYTES = 16 * 1024; // whole encoded frame
   const MAX_BODY_CHARS = 2000;       // chat text
@@ -155,6 +160,9 @@
         return null;
       case TYPES.ERROR:
         if (!isPlainObject(msg.body) || typeof msg.body.code !== 'string') return 'ERROR body.code must be a string';
+        return null;
+      case TYPES.BYE:
+        if (!isPlainObject(msg.body) || !Number.isInteger(msg.body.code)) return 'BYE body.code must be an integer close code';
         return null;
       default:
         return 'unhandled type';

@@ -1,6 +1,6 @@
 // Persistent storage: users and messages in one SQLite file (Node's built-in node:sqlite).
 // It knows nothing about sockets or ChatProto frames; the hub calls it, and any transport
-// (WebSocket now, MQTT in Step 5) gets persistence for free.
+// (WebSocket, MQTT) gets persistence for free.
 //
 // DatabaseSync is synchronous: when run() returns, the row is committed to disk. The hub
 // relies on that: it stores a message and only THEN lets the transport send the ACK.
