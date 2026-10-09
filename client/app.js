@@ -6,6 +6,9 @@
 //   conversations.js  what to show (messages per contact, ticks, unread)       – no DOM
 //   app.js (this)     wires ChatClient events into the state, then render()s the DOM
 //
+// Step 7 adds groups: '#name' chats in the list, a new-group / add-people form, a Leave button,
+// sender names on received group bubbles and membership changes as system lines.
+//
 // Rule for this file: every event only CHANGES STATE and calls render(); render() draws the
 // screen from the state. And user text only ever reaches the page through textContent,
 // never innerHTML, so a message like <img onerror=...> is shown as text, not run (XSS).
@@ -48,9 +51,12 @@
   function loadOutbox(name) {
     const saved = store.get(local, `chat.outbox.${name}`, []);
     if (!Array.isArray(saved)) return [];
-    // Only keep entries that are still valid ChatProto MSG frames.
-    return saved.filter(m => m && m.type === ChatProto.TYPES.MSG && ChatProto.decode(ChatProto.encode(m)).ok);
+    // Only keep entries that are still valid ChatProto MSG (or, Step 7, GROUP change) frames.
+    const kinds = [ChatProto.TYPES.MSG, ChatProto.TYPES.GROUP];
+    return saved.filter(m => m && kinds.includes(m.type) && ChatProto.decode(ChatProto.encode(m)).ok);
   }
+
+  const isGroup = ChatProto.isGroup;
 
   // ---------------------------------------------------------------------------------------
   // STATE – everything the screen shows is derived from these values.
@@ -64,7 +70,10 @@
     online: new Set(),   // usernames online right now
     known: [],           // every registered username
     conv: null,          // Conversations (created at the first WELCOME)
-    open: history.state && history.state.chat || null, // contact whose chat is open
+    open: history.state && history.state.chat || null, // contact (or '#group') whose chat is open
+    // Step 7: the new-group / add-people form, when it is open:
+    //   { mode: 'create' | 'add', group, picked: Set of usernames, error, pending: id of our GROUP request }
+    form: null,
     note: '',            // short-lived good news in the banner ("synced 3 messages")
     debug: store.get(local, 'chat.debug', false),
   };
@@ -138,8 +147,9 @@
     // re-sends them after SYNCED. Done before the replay, so their ids count as already seen.
     const saved = loadOutbox(state.me).filter(m => !client.pending.has(m.id));
     client.restore(saved);
-    for (const m of saved) state.conv.addSent(m);
-    if (state.open && !state.known.includes(state.open)) state.open = null;
+    for (const m of saved) if (m.type === ChatProto.TYPES.MSG) state.conv.addSent(m);
+    // A group chat is checked after SYNCED instead: our groups are only known once the replay is in.
+    if (state.open && !isGroup(state.open) && !state.known.includes(state.open)) state.open = null;
     render({ scroll: true });
   });
 
@@ -151,6 +161,7 @@
     replayedNew = 0;
     synced = true;
     if (fresh) showNote(`Up to date · ${fresh} message${fresh === 1 ? '' : 's'} synced from the server`);
+    closeGoneGroup();
     if (state.open) markRead(state.open);
     render();
   });
@@ -158,9 +169,39 @@
   on('message', msg => {
     if (!synced) replayedNew++; // between WELCOME and SYNCED every MSG is part of the replay
     state.conv.addReceived(msg);
-    if (msg.from === state.open && document.visibilityState === 'visible') markRead(state.open);
+    if (state.conv.contactOf(msg) === state.open && document.visibilityState === 'visible') markRead(state.open);
     render();
   });
+
+  // Step 7: a membership change (create / add / leave), live or replayed by the sync.
+  on('group', msg => {
+    if (!synced) replayedNew++;
+    state.conv.applyGroup(msg);
+    const form = state.form;
+    if (form && form.pending === msg.id) {
+      // Our own request came back as an event: done. A new group opens straight away.
+      state.form = null;
+      if (form.mode === 'create') {
+        state.open = msg.to;
+        history.replaceState({ chat: msg.to }, ''); // the form's history entry becomes the chat
+        markRead(msg.to);
+        render({ scroll: true });
+        return;
+      }
+      history.back(); // add: back to the group chat (popstate re-renders)
+    }
+    closeGoneGroup();
+    if (msg.to === state.open && document.visibilityState === 'visible') markRead(state.open);
+    render();
+  });
+
+  // We left the group that is open (or it is not ours after a reload): back to the list.
+  function closeGoneGroup() {
+    if (!state.open || !isGroup(state.open) || !synced || state.conv.members(state.open)) return;
+    state.open = null;
+    state.form = null;
+    history.replaceState(null, '');
+  }
 
   // Already have this id. If it is one of ours restored from the outbox, the replay tells us
   // its seq (the server stored it before the reload).
@@ -177,7 +218,15 @@
   });
 
   on('serverError', (body, msg) => {
-    if (msg && state.conv) {
+    if (msg && msg.type === ChatProto.TYPES.GROUP) {
+      // A refused group change (GROUP_EXISTS, UNKNOWN_USER ...): show it in the form if open.
+      if (state.form && state.form.pending === msg.id) {
+        state.form.error = body.message;
+        state.form.pending = null;
+      } else {
+        showNote(`Group change refused: ${body.message}`);
+      }
+    } else if (msg && state.conv) {
       state.conv.setStatus(msg.id, 'failed', null, body.message);
     } else if (!state.me && state.joining) {
       // Our HELLO was refused (NAME_TAKEN, bad name ...): back to the join form.
@@ -256,8 +305,61 @@
 
   window.addEventListener('popstate', () => {
     state.open = history.state && history.state.chat || null;
+    if (!(history.state && history.state.form)) state.form = null; // back out of the group form
     if (state.open) markRead(state.open);
     render({ scroll: true });
+  });
+
+  // ---- Step 7: groups ----
+
+  // Open the form: 'create' (from the chat list) or 'add' (people to the open group).
+  function openForm(mode) {
+    state.form = { mode, group: mode === 'add' ? state.open : null, picked: new Set(), error: '', pending: null };
+    history.pushState({ form: mode, chat: state.open }, ''); // the back gesture cancels the form
+    $('groupName').value = '';
+    render();
+    if (mode === 'create') $('groupName').focus();
+  }
+
+  $('newGroupBtn').addEventListener('click', () => openForm('create'));
+  $('addMembersBtn').addEventListener('click', () => openForm('add'));
+  $('groupBackBtn').addEventListener('click', () => history.back());
+
+  $('pickList').addEventListener('change', e => {
+    if (!state.form || e.target.type !== 'checkbox') return;
+    if (e.target.checked) state.form.picked.add(e.target.value);
+    else state.form.picked.delete(e.target.value);
+    render();
+  });
+
+  $('groupForm').addEventListener('submit', e => {
+    e.preventDefault();
+    const form = state.form;
+    if (!form || form.pending) return;
+    const users = [...form.picked].sort();
+    if (form.mode === 'create') {
+      const name = '#' + $('groupName').value.trim();
+      if (!ChatProto.GROUP_RE.test(name)) {
+        form.error = 'Use 1–20 letters, digits or _ (no spaces).';
+        return render();
+      }
+      // Goes through ChatClient's outbox: retried until ACKed, like a message.
+      form.pending = client.changeGroup('create', name, users).id;
+    } else {
+      if (!users.length) { form.error = 'Pick at least one person.'; return render(); }
+      form.pending = client.changeGroup('add', form.group, users).id;
+    }
+    form.error = '';
+    render();
+  });
+
+  $('leaveBtn').addEventListener('click', () => {
+    const name = state.open;
+    if (!isGroup(name) || !window.confirm(`Leave ${name}? You will no longer get its messages.`)) return;
+    // The chat closes when the server's GROUP event (members without us) comes back.
+    client.changeGroup('leave', name);
+    showNote(`Leaving ${name}…`);
+    render();
   });
 
   $('sendForm').addEventListener('submit', e => {
@@ -316,14 +418,16 @@
   // VIEW – draw the screen from `state`. Called after every change.
 
   function render({ scroll = false } = {}) {
-    const screen = !state.me ? 'join' : state.open ? 'chat' : 'list';
+    const screen = !state.me ? 'join' : state.form ? 'group' : state.open ? 'chat' : 'list';
     $('joinView').hidden = screen !== 'join';
     $('listView').hidden = screen !== 'list';
     $('chatView').hidden = screen !== 'chat';
+    $('groupView').hidden = screen !== 'group';
     renderBanner();
     if (screen === 'join') renderJoin();
     if (screen === 'list') renderList();
     if (screen === 'chat') renderChat(scroll);
+    if (screen === 'group') renderGroupForm();
     renderDebug();
     // Unread count in the tab title, e.g. "(3) Realtime Chat".
     const unread = state.conv ? state.conv.totalUnread() : 0;
@@ -374,26 +478,29 @@
     $('contactList').replaceChildren(...rows.map(contactRow));
   }
 
-  // One contact: avatar with presence dot, name, time, last message, unread badge.
-  function contactRow({ name, last, unread }) {
+  // One contact or group: avatar (with presence dot for a person), name, time, last message, unread badge.
+  function contactRow({ name, last, unread, group, members }) {
     const online = state.online.has(name);
     const btn = el('button', 'contact');
     btn.type = 'button';
     btn.dataset.contact = name;
     // Screen readers get one clear sentence instead of the separate pieces.
-    btn.setAttribute('aria-label',
-      `${name}, ${online ? 'online' : 'offline'}${unread ? `, ${unread} unread` : ''}`);
+    const status = group ? `group, ${members.length} members` : online ? 'online' : 'offline';
+    btn.setAttribute('aria-label', `${name}, ${status}${unread ? `, ${unread} unread` : ''}`);
 
-    const avatar = el('span', 'avatar', name[0]);
-    avatar.append(el('span', `dot ${online ? 'online' : 'offline'}`));
+    const avatar = el('span', group ? 'avatar group' : 'avatar', group ? '#' : name[0]);
+    if (!group) avatar.append(el('span', `dot ${online ? 'online' : 'offline'}`));
 
     const top = el('span', 'contact-top');
     top.append(el('span', 'contact-name', name));
     if (last) top.append(el('span', 'contact-time', timeLabel(last.ts)));
 
     const bottom = el('span', 'contact-bottom');
-    const preview = last ? (last.mine ? 'You: ' : '') + last.body
-                         : online ? 'online · say hi' : 'offline · messages wait on the server';
+    let preview;
+    if (last && last.event) preview = eventText(last);
+    else if (last) preview = (last.mine ? 'You: ' : group ? `${last.from}: ` : '') + last.body;
+    else if (group) preview = `${members.length} members`;
+    else preview = online ? 'online · say hi' : 'offline · messages wait on the server';
     bottom.append(el('span', 'preview', preview));
     if (unread) bottom.append(el('span', 'badge', unread > 99 ? '99+' : String(unread)));
 
@@ -407,9 +514,20 @@
 
   function renderChat(forceScroll) {
     const name = state.open;
-    const online = state.online.has(name);
+    const members = state.conv.members(name); // null for a 1-to-1 chat (or a group not synced yet)
+    const group = isGroup(name);
     $('chatName').textContent = name;
-    $('chatPresence').textContent = online ? 'online' : 'offline · messages wait on the server';
+    if (group) {
+      // Presence stays global (PRESENCE frames); a group just counts its members who are online.
+      const list = members || [];
+      const online = list.filter(u => u === state.me || state.online.has(u)).length;
+      const names = list.map(u => (u === state.me ? 'you' : u)).join(', ');
+      $('chatPresence').textContent = `${list.length} members · ${online} online · ${names}`;
+    } else {
+      $('chatPresence').textContent = state.online.has(name) ? 'online' : 'offline · messages wait on the server';
+    }
+    $('addMembersBtn').hidden = !members;
+    $('leaveBtn').hidden = !members;
 
     const list = $('messageList');
     // Auto-scroll only if the user was already at (or near) the bottom: if they scrolled
@@ -430,20 +548,83 @@
   };
 
   function bubble(m) {
+    if (m.event) return el('li', 'system', eventText(m)); // membership change: a centred grey line
     const li = el('li', `bubble${m.mine ? ' mine' : ''}${m.status === 'failed' ? ' failed' : ''}`);
+    // In a group, say who wrote it (textContent, like the message itself).
+    if (!m.mine && isGroup(m.to)) li.append(el('span', 'sender', m.from));
     li.append(document.createTextNode(m.body)); // textContent-style: never parsed as HTML
     const meta = el('span', 'meta');
     meta.append(el('time', '', timeLabel(m.ts)));
     if (m.mine) {
       const [symbol, label] = TICKS[m.status] || TICKS.waiting;
       const tick = el('span', `tick ${m.status}`, symbol);
-      tick.title = label + (m.seq != null ? ` (seq ${m.seq})` : '');
+      // Group: ✓✓ only when every other member got it live; the tooltip says how many did.
+      const counts = m.recipients != null ? ` · live to ${m.delivered} of ${m.recipients} members` : '';
+      tick.title = label + counts + (m.seq != null ? ` (seq ${m.seq})` : '');
       tick.setAttribute('aria-label', label);
       meta.append(tick);
     }
     li.append(meta);
     if (m.error) li.append(el('span', 'fail-reason', `Not sent: ${m.error}`));
     return li;
+  }
+
+  // "alice added bob and you", "You created the group with bob", "carol left".
+  function eventText(e) {
+    const who = e.from === state.me ? 'You' : e.from;
+    const names = e.event.users.map(u => (u === state.me ? 'you' : u));
+    const list = names.length > 1 ? `${names.slice(0, -1).join(', ')} and ${names[names.length - 1]}` : names[0];
+    if (e.event.op === 'create') return `${who} created the group${list ? ` with ${list}` : ''}`;
+    if (e.event.op === 'add') return `${who} added ${list}`;
+    return `${who} left`;
+  }
+
+  // The new-group / add-people form (Step 7).
+  function renderGroupForm() {
+    const form = state.form;
+    const create = form.mode === 'create';
+    const members = create ? [state.me] : state.conv.members(form.group) || [];
+    $('groupTitle').textContent = create ? 'New group' : `Add to ${form.group}`;
+    $('groupSubtitle').textContent = create ? 'You are added automatically' : `${members.length} members now`;
+    $('groupNameRow').hidden = !create;
+    $('groupName').disabled = !!form.pending;
+    $('pickLegend').textContent = create ? 'Add people (optional)' : 'Pick people to add';
+
+    // Everyone registered who is not in the group yet. The list is only rebuilt when it changes,
+    // so a tap on a checkbox does not lose the keyboard focus.
+    const candidates = state.known.filter(u => !members.includes(u));
+    for (const u of [...form.picked]) if (!candidates.includes(u)) form.picked.delete(u);
+    const list = $('pickList');
+    const key = candidates.join(',');
+    if (list.dataset.key !== key) {
+      list.dataset.key = key;
+      list.replaceChildren(...candidates.map(u => {
+        const box = el('input');
+        box.type = 'checkbox';
+        box.value = u;
+        const label = el('label');
+        label.append(box, el('span', 'pick-name', u), el('span', 'pick-state'));
+        const li = el('li');
+        li.append(label);
+        return li;
+      }));
+    }
+    for (const label of list.querySelectorAll('label')) {
+      const box = label.querySelector('input');
+      box.checked = form.picked.has(box.value);
+      box.disabled = !!form.pending;
+      const online = state.online.has(box.value);
+      const st = label.querySelector('.pick-state');
+      st.textContent = online ? 'online' : 'offline';
+      st.className = `pick-state${online ? ' online' : ''}`;
+    }
+    $('pickEmpty').hidden = candidates.length > 0;
+
+    $('groupError').textContent = form.error;
+    const n = form.picked.size;
+    $('groupSubmit').disabled = !!form.pending;
+    $('groupSubmit').textContent = form.pending ? (create ? 'Creating…' : 'Adding…')
+      : create ? `Create group${n ? ` with ${n}` : ''}` : `Add ${n || ''}`.trim();
   }
 
   function renderDebug() {

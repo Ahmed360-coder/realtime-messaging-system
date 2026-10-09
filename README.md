@@ -36,7 +36,7 @@ CSEN 503 – Computer Networks, Winter 2026 (Instructor: Amr Saber)
    (Aedes) embedded in the server. Same hub, same database: users of the two protocols chat
    with each other.
 
-### ChatProto v1 (Step 2, extended for reliability in Step 3)
+### ChatProto v1 (Step 2, extended for reliability in Step 3 and for groups in Step 7)
 One JSON object per WebSocket text frame on `ws://<laptop-ip>:3000/ws`
 (codec: `protocols/chatproto.js`, shared by server and browser).
 
@@ -47,15 +47,18 @@ One JSON object per WebSocket text frame on `ws://<laptop-ip>:3000/ws`
 
 `id` is chosen by the sender and identifies the message for deduplication; `seq` is
 assigned by the server when it stores the message (ordering and offline sync).
+**Addresses:** `to` is a username (`"bob"`, 1-to-1) or a group (`"#study"`: `#` + 1–20 of
+`A-Z a-z 0-9 _`). A username can never contain `#`, so the address alone says which it is.
 
 | Type | Direction | Fields |
 |---|---|---|
 | `HELLO` | client → server | `body.username` (1–20 of `A-Z a-z 0-9 _`), `body.token` (16–128 of `A-Z a-z 0-9 _ -`), `body.lastSeq` (optional integer ≥ 0, default 0) |
-| `MSG` | both | `to`, `body` (text ≤ 2000 chars); server sets `from` and adds `seq` |
+| `MSG` | both | `to` (username or `#group`), `body` (text ≤ 2000 chars); server sets `from` and adds `seq` |
+| `GROUP` (Step 7) | both | client → server: `to` (`#group`), `body.op` (`create` / `add` / `leave`), `body.users` (usernames; for `create`/`add`, ≤ 50). Server → members: the same plus `from` (who did it), `seq`, `body.members` (the member list after the change) |
 | `LIST` | client → server | – |
 | `WELCOME` | server → client | `body.username`, `body.users` (online), `body.known` (all registered) |
 | `SYNCED` | server → client | `body.count` (messages replayed), `body.lastSeq` |
-| `ACK` | server → client | `body.ref` (acked id), `body.seq`, `body.status` (`delivered` / `stored` / `duplicate`) |
+| `ACK` | server → client | `body.ref` (acked id), `body.seq`, `body.status` (`delivered` / `stored` / `duplicate`); for a group also `body.recipients` (other members) and `body.delivered` (how many got it live) |
 | `PRESENCE` | server → client | `body.username`, `body.status` (`online`/`offline`) |
 | `USERS` | server → client | `body.users` (online), `body.known` (all registered) |
 | `ERROR` | server → client | `body.code`, `body.message`, `body.ref` |
@@ -63,20 +66,24 @@ assigned by the server when it stores the message (ordering and offline sync).
 
 Error codes: `BAD_JSON`, `BAD_VERSION`, `BAD_TYPE`, `BAD_FIELD`, `TOO_LARGE`, `NOT_JOINED`,
 `ALREADY_JOINED`, `NAME_TAKEN` (name registered to another token), `UNKNOWN_USER`
-(recipient never joined). Malformed frames get an `ERROR` and the connection stays open;
+(recipient never joined), and for groups `UNKNOWN_GROUP`, `NOT_MEMBER`, `GROUP_EXISTS`,
+`GROUP_FULL` (> 50 members). Malformed frames get an `ERROR` and the connection stays open;
 frames over 16 KB close the socket with code 1009. The server pings every 30 s and drops
 clients that do not answer. Close code `4001` = "replaced by a newer connection of the
 same user"; the client must not auto-reconnect after it.
 
 **Join and sync sequence:** `HELLO{lastSeq}` → `WELCOME` → every stored `MSG` to/from the
-user with `seq > lastSeq`, oldest first → `SYNCED`. Join and replay run in the same
+user, and every `MSG`/`GROUP` of the user's groups since they joined each one, with
+`seq > lastSeq`, oldest first → `SYNCED`. Join and replay run in the same
 event-loop turn, so no live message can arrive in the middle of the replay.
 
 **Why still `v: 1`:** Step 3 adds types and fields and makes `HELLO.token` required. The
 version field lets *independently deployed* peers detect incompatibility. Our server serves
 the client page and codec from the same origin, so a client of another version cannot
 exist, and v1 had not been frozen or released. Bumping to v2 would add a compatibility
-branch with no client to use it.
+branch with no client to use it. Step 7 is the same case and is also purely additive: one new
+type (`GROUP`), a new address form (`#name`), two optional `ACK` fields and four error codes.
+Every frame that existed before keeps its exact meaning.
 
 Code layout: `protocols/chatproto.js` (format) and `protocols/mqtt-binding.js` (MQTT topics) →
 `server/transports/websocket.js` / `server/transports/mqtt.js` (bytes ↔ ChatProto text) →
@@ -86,6 +93,10 @@ Code layout: `protocols/chatproto.js` (format) and `protocols/mqtt-binding.js` (
 Monitoring (Step 6): `server/core/metrics.js` listens to the hub's events and counts TCP sockets;
 `server/stats-routes.js` serves `/stats`, `/api/stats` and the SSE stream `/api/stats/stream`;
 `client/stats.html` + `stats.js` + `stats.css` are the dashboard page.
+Groups (Step 7) add no new files on the server: `hub.js` gains `sendGroup` / `changeGroup` /
+`fanOut`, `store.js` the group tables and the schema migration, `dispatch.js` the `GROUP` route.
+Tests: `tests/groups.test.js` (both protocols) plus group cases in the codec, store and
+conversations unit tests.
 Client side: `client/mqtt-socket.js` (an MQTT connection that looks like a WebSocket) →
 `client/chat-client.js` (retry, dedup, reconnect; no UI) → `client/conversations.js`
 (page state; no UI) → `client/app.js` + `index.html` + `style.css` (the phone UI).
@@ -119,9 +130,30 @@ application adds its own end-to-end checks:
   Later, the same token is required. The same token while an old "zombie" session still exists
   takes it over (`4001`), so a phone that changed networks can reconnect immediately.
 
-Database (`chat.db`, git-ignored; `DB_PATH` overrides): `users(username PK, token_hash,
-created_at, last_seen)`, `messages(seq PK AUTOINCREMENT, id UNIQUE, sender, recipient,
-body, ts, stored_at)` with indexes on `(recipient, seq)` and `(sender, seq)`.
+Database (`chat.db`, git-ignored; `DB_PATH` overrides), schema version 1 (`PRAGMA user_version`):
+
+| Table | Columns | Notes |
+|---|---|---|
+| `users` | `username` PK, `token_hash`, `created_at`, `last_seen` | |
+| `messages` | `seq` PK AUTOINCREMENT, `id` UNIQUE, `kind` (`text` / `create` / `add` / `leave`), `sender` → users, `recipient` → users, `group_name` → groups, `body`, `ts`, `stored_at` | CHECK: exactly one of `recipient` / `group_name`; a membership change (`kind` ≠ `text`) belongs to a group and its `body` is JSON `{users, members}` |
+| `groups` (Step 7) | `name` PK (`#study`), `created_by` → users, `created_at` | the name is unique |
+| `group_members` (Step 7) | `group_name` → groups, `username` → users, `joined_seq`; PK (`group_name`, `username`) | current members only; `joined_seq` = seq of the change that added them |
+
+Indexes: `messages(recipient, seq)`, `messages(sender, seq)`, `messages(group_name, seq)`,
+`group_members(username)`. Each sync query is a range scan on one of them.
+
+**Migration.** A `chat.db` from Steps 3–6 (version 0) is upgraded once, at startup. SQLite's
+`ALTER TABLE` cannot drop the old `recipient NOT NULL REFERENCES users` constraint, so
+`messages` is rebuilt as the SQLite manual describes, in one transaction:
+1. create the new tables;
+2. create `messages_new`;
+3. copy every row with its `seq`;
+4. drop `messages`;
+5. rename `messages_new` to `messages`;
+6. keep the AUTOINCREMENT counter, so a seq is never handed out twice;
+7. set `user_version = 1`.
+
+If any step fails, the transaction rolls back and the old file is unchanged.
 
 ### Mobile chat UI (Step 4)
 Plain HTML/CSS/JS served from `client/` (no framework, no build step), designed for
@@ -224,8 +256,96 @@ every MQTT packet (`CONNECT`, `SUBACK`, `PUBLISH … id=7`, `PUBACK id=7` …).
 | End-to-end receipt | ChatProto `ACK` | ChatProto `ACK` (the same) |
 | Dead-peer detection | server ping every 30 s | client `PINGREQ` after 30 s idle, broker timeout 45 s |
 
-### Additional Features (planned)
-- Group chat.
+### Group chat (Step 7)
+Groups work the same over both protocols: one group can have WebSocket and MQTT members.
+
+**Membership model: invite-only, members add.**
+
+| Action | Who may do it | Refused with |
+|---|---|---|
+| `create #name` | any joined user; the creator + `body.users` become the members | `GROUP_EXISTS`, `UNKNOWN_USER` |
+| `add` | any member, adding registered users | `NOT_MEMBER`, `UNKNOWN_GROUP`, `UNKNOWN_USER`, `GROUP_FULL`, `BAD_FIELD` (already members) |
+| `leave` | any member | `NOT_MEMBER`, `UNKNOWN_GROUP` |
+| send `MSG` to `#name` | members only | `NOT_MEMBER`, `UNKNOWN_GROUP` |
+
+You cannot join a group on your own. There is no kick and no admin, so there is no
+"what if the admin leaves" problem; admins and kicking would be an extension. A group has at
+most 50 members, which caps the fan-out. Every check is done by the hub, inside the same SQLite
+transaction as the write, so membership cannot change between the check and the insert.
+The client is never trusted, and `from` is still set by the server.
+
+**Membership changes are messages.** A `GROUP` request is stored in the `messages` table (`kind` =
+the op) and gets a `seq`, exactly like a chat message. So it reuses every Step 3 guarantee:
+- stored before the `ACK`;
+- retried from the outbox (also across a reload);
+- a retry is recognised by its id. The retry check runs **before** the authorization checks,
+  so a retried `create` gets `duplicate`, not `GROUP_EXISTS`;
+- offline members get it by sync;
+- it has one place in the same order as the messages: carol added at seq 50 receives 51,
+  never 49.
+
+The server pushes the stored change as a `GROUP` event to everyone it concerns: the members
+before **and** after the change, including the user who made it. Each event carries the full
+member list after the change, so any single event tells a client who is in the group. The
+creator's page learns the result the same way as everybody else, and its own request id comes
+back as the event id.
+
+**Fan-out.** A group message is stored **once** (one row, `group_name` set: fan-out on read).
+The hub then pushes a copy to each **online** member except the sender (fan-out on write for
+live delivery), in one synchronous loop. Offline members get it from the next sync.
+- Cost per message: 1 SQLite write + fsync, *N − 1* `deliver()` calls (WebSocket frames or
+  MQTT PUBLISH + PUBACK), 1 ACK. Storage is O(1) per message instead of O(N) for a per-user
+  inbox.
+- We do **not** let the MQTT broker fan out with a shared topic such as `chat/group/study`:
+  - WebSocket members would never see it;
+  - the message must be stored and get its `seq` before anyone receives it;
+  - membership would have to be enforced a second time in `authorizeSubscribe`.
+
+  Every copy goes down the member's own `down` topic or WebSocket, so the hub stays
+  protocol-agnostic.
+
+**Ordering: one global `seq`.** DMs and all groups share one counter.
+- `lastSeq` stays a single cumulative acknowledgement. Per-group sequences would need a vector
+  of cursors in `HELLO`.
+- Every member sees a group's messages in the same order: the hub assigns the seq and then
+  delivers in that order within one event-loop turn, each TCP connection is FIFO, and clients
+  sort by seq.
+- The cost is one serialisation point, which a single-threaded server has anyway. A cluster
+  would need per-group sequences.
+
+**Offline sync, extended.** The sync query returns three indexed range scans merged by `seq`:
+1. DMs to me;
+2. DMs from me;
+3. every message and change of the groups I am in now, with `seq ≥ joined_seq` for that
+   group.
+
+So a new member sees the group from the moment they were added, not its older history (a
+privacy rule). After leaving, the group is no longer replayed, and the page removes it from the
+list.
+
+**Delivery status.** The group `ACK` carries `recipients` (other members) and `delivered` (online
+ones that got their copy).
+- ✓✓ = **all** other members got it live.
+- ✓ = at least one was offline and gets it from sync.
+- The tooltip says "live to 2 of 3 members".
+
+**Presence** stays global (`PRESENCE` frames go to everyone), so a group needs no presence of
+its own. The header counts "4 members · 3 online".
+
+**Phone UI.**
+- The chat list shows groups (square `#` avatar, "N members").
+- **+ Group** opens a form: name plus a checklist of registered users with their online state.
+- A group chat has **+ Add** (same form) and **Leave**.
+- Other people's bubbles show the sender's name.
+- Membership changes appear as centred grey lines ("alice added carol", "bob left").
+- Everything is still written with `textContent` only.
+
+**Metrics.** One group message counts once in *Sent* and in msg/s (a logical message) and in
+*…of them to groups*. *Copies delivered live* / *Copies stored for offline* count **per recipient
+copy**: a group message to 3 others with 2 online adds 2 + 1. For 1-to-1 that is still exactly
+1, so the Step 6 numbers keep their meaning.
+- *Received live* and delivery latency are per copy, under the recipient's protocol.
+- *Group changes* counts create/add/leave. The database card shows the number of groups.
 
 ### Monitoring – live metrics dashboard (Step 6)
 Open `http://<laptop-ip>:3000/stats` (also linked from the join screen). It updates every second.
@@ -237,7 +357,7 @@ Open `http://<laptop-ip>:3000/stats` (also linked from the join screen). It upda
 | Connections open / opened since start | gauge / counter | TCP sockets upgraded on `/ws` or `/mqtt` |
 | Users online | gauge | the hub's online map, read at snapshot time |
 | Messages per second (avg of the last 10 s) + chart of the last 60 s | rate | sliding window of 60 one-second buckets |
-| Messages sent (new) · delivered live · stored for offline user · duplicates · received live · replayed by sync | counters | hub events |
+| Messages sent (new) · to groups · copies delivered live · copies stored for offline · duplicates · received live · replayed by sync · group changes | counters | hub events |
 | Errors by code (`BAD_JSON`, `UNKNOWN_USER` …, `INTERNAL`) | counters | every ChatProto `ERROR` reply |
 | Bytes in / out | counters | `socket.bytesRead` / `bytesWritten` of each TCP connection |
 | Server latency: ACK and delivery, p50 / p95 / max (ms) | summary of the last 1000 samples | `performance.now()` |
@@ -305,7 +425,7 @@ docs/        design document and diagrams
 - [x] Step 4 – Mobile chat UI
 - [x] Step 5 – MQTT: second application-layer protocol
 - [x] Step 6 – Live metrics dashboard
-- [ ] Step 7 – Group chat
+- [x] Step 7 – Group chat
 - [ ] Step 8 – End-to-end encryption
 - [ ] Step 9 – Benchmarks and charts
 - [ ] Step 10 – Documentation, demo rehearsal, oral defense prep

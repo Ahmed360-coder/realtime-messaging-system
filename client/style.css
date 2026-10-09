@@ -91,7 +91,13 @@ button { cursor: pointer; }
   border: none; border-radius: 12px; background: transparent;
   font-size: 1.1rem; color: var(--muted);
 }
-#backBtn { font-size: 2rem; line-height: 1; margin-left: -12px; color: var(--accent); }
+.back { font-size: 2rem; line-height: 1; margin-left: -12px; color: var(--accent); }
+.pill-btn { /* small text button in a top bar (+ Group, + Add, Leave) */
+  flex: none; min-height: 40px; padding: 0 12px;
+  border: 1px solid var(--surface-2); border-radius: 999px;
+  background: transparent; color: var(--accent); font-size: 0.9rem; font-weight: 600;
+}
+.pill-btn.danger { color: var(--danger); }
 .debug-toggle { font-family: ui-monospace, monospace; font-size: 0.9rem; }
 .debug-toggle[aria-pressed="true"] { background: var(--surface-2); color: var(--text); }
 
@@ -172,6 +178,7 @@ button { cursor: pointer; }
   border: 2px solid var(--surface); background: var(--muted);
 }
 .dot.online { background: var(--ok); }
+.avatar.group { border-radius: 14px; background: var(--accent); color: var(--accent-text); } /* square-ish: a group, not a person */
 .contact-main { flex: 1; min-width: 0; }
 .contact-top { display: flex; align-items: baseline; gap: 8px; }
 .contact-name { flex: 1; min-width: 0; font-weight: 600; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
@@ -218,6 +225,46 @@ button { cursor: pointer; }
 .bubble.failed { background: var(--danger); }
 .fail-reason { display: block; font-size: 0.75rem; margin-top: 2px; }
 .messages .empty { margin: auto; }
+/* Groups (Step 7): who wrote a received bubble, and membership changes as centred system lines. */
+.sender { display: block; font-size: 0.75rem; font-weight: 700; color: var(--accent); margin-bottom: 2px; }
+.system {
+  align-self: center; max-width: 90%;
+  padding: 4px 12px; border-radius: 999px;
+  background: var(--surface-2); color: var(--muted);
+  font-size: 0.8rem; text-align: center; overflow-wrap: anywhere;
+}
+
+/* ---- New group / add people (Step 7) ---- */
+.group-form {
+  flex: 1; min-height: 0; overflow-y: auto;
+  display: flex; flex-direction: column; gap: 8px;
+  padding: 16px var(--gutter);
+  padding-bottom: max(16px, env(safe-area-inset-bottom));
+}
+.group-form label[for], .pick legend { font-weight: 600; }
+.group-name { display: flex; flex-direction: column; gap: 6px; }
+.hash-input {
+  display: flex; align-items: center;
+  border: 1px solid var(--surface-2); border-radius: 12px; background: var(--bg);
+}
+.hash-input span { padding-left: 14px; color: var(--muted); font-weight: 700; }
+.hash-input input {
+  flex: 1; min-width: 0; min-height: var(--tap); padding: 0 14px 0 4px;
+  border: none; background: transparent; font-size: 16px;
+}
+.pick { margin: 8px 0 0; padding: 0; border: none; min-width: 0; }
+.pick legend { padding: 0; margin-bottom: 6px; }
+.pick-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: 6px; }
+.pick-list label {
+  display: flex; align-items: center; gap: 12px;
+  min-height: var(--tap); padding: 0 14px;
+  border: 1px solid var(--surface-2); border-radius: 12px; background: var(--bg);
+}
+.pick-list label:has(input:checked) { border-color: var(--accent); }
+.pick-list input { width: 20px; height: 20px; margin: 0; accent-color: var(--accent); }
+.pick-name { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.pick-state { font-size: 0.8rem; color: var(--muted); }
+.pick-state.online { color: var(--ok); }
 
 /* ---- Composer (message box) ---- */
 .composer {

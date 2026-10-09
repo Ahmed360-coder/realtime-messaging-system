@@ -111,3 +111,46 @@ test('decodes server messages with SERVER_TYPES', () => {
   const err = ChatProto.error(ERRORS.NAME_TAKEN, 'taken', null);
   assert.equal(decodeObj(err, ChatProto.SERVER_TYPES).ok, true);
 });
+
+// ---- Step 7: groups ----
+
+test('group addresses: MSG may go to #group, and #group can never be a username', () => {
+  assert.equal(decodeObj({ ...validMsg(), to: '#study' }).ok, true);
+  assert.equal(decodeObj({ ...validMsg(), to: '#' }).error.code, ERRORS.BAD_FIELD);
+  assert.equal(decodeObj({ ...validMsg(), to: '#two words' }).error.code, ERRORS.BAD_FIELD);
+  assert.equal(decodeObj({ ...validMsg(), to: '##x' }).error.code, ERRORS.BAD_FIELD);
+  assert.equal(ChatProto.isGroup('#study'), true);
+  assert.equal(ChatProto.isGroup('study'), false);
+  assert.equal(ChatProto.USERNAME_RE.test('#study'), false);
+  // HELLO cannot register a name that looks like a group.
+  const hello = ChatProto.make(TYPES.HELLO, { body: { username: '#study', token: 'x'.repeat(16) } });
+  assert.equal(decodeObj(hello).error.code, ERRORS.BAD_FIELD);
+});
+
+test('validates GROUP: to, op, users', () => {
+  const group = (to, body) => ChatProto.make(TYPES.GROUP, { to, body });
+  assert.equal(decodeObj(group('#g', { op: 'create', users: [] })).ok, true);
+  assert.equal(decodeObj(group('#g', { op: 'create', users: ['bob', 'carol'] })).ok, true);
+  assert.equal(decodeObj(group('#g', { op: 'add', users: ['bob'] })).ok, true);
+  assert.equal(decodeObj(group('#g', { op: 'leave' })).ok, true);
+
+  assert.equal(decodeObj(group('g', { op: 'create', users: [] })).error.code, ERRORS.BAD_FIELD);       // not #name
+  assert.equal(decodeObj(group('#g', { op: 'kick', users: ['bob'] })).error.code, ERRORS.BAD_FIELD);   // unknown op
+  assert.equal(decodeObj(group('#g', { op: 'create' })).error.code, ERRORS.BAD_FIELD);                 // no users
+  assert.equal(decodeObj(group('#g', { op: 'add', users: [] })).error.code, ERRORS.BAD_FIELD);         // nobody to add
+  assert.equal(decodeObj(group('#g', { op: 'add', users: ['no spaces'] })).error.code, ERRORS.BAD_FIELD);
+  const tooMany = Array.from({ length: ChatProto.MAX_GROUP_MEMBERS + 1 }, (_, i) => `u${i}`);
+  assert.equal(decodeObj(group('#g', { op: 'create', users: tooMany })).error.code, ERRORS.BAD_FIELD);
+  assert.equal(decodeObj(group('#g', 'create')).error.code, ERRORS.BAD_FIELD);
+});
+
+test('GROUP travels both ways; the server version carries seq and members', () => {
+  const event = ChatProto.make(TYPES.GROUP, { from: 'alice', to: '#g', seq: 7, body: { op: 'add', users: ['bob'], members: ['alice', 'bob'] } });
+  assert.equal(decodeObj(event, ChatProto.SERVER_TYPES).ok, true);
+  assert.equal(decodeObj({ ...event, body: { ...event.body, members: 'alice' } }, ChatProto.SERVER_TYPES).error.code, ERRORS.BAD_FIELD);
+  // A group ACK says how many members got it live.
+  const ack = ChatProto.make(TYPES.ACK, { body: { ref: event.id, seq: 7, status: 'stored', recipients: 3, delivered: 2 } });
+  assert.equal(decodeObj(ack, ChatProto.SERVER_TYPES).ok, true);
+  const badAck = ChatProto.make(TYPES.ACK, { body: { ref: event.id, seq: 7, status: 'stored', recipients: 3 } });
+  assert.equal(decodeObj(badAck, ChatProto.SERVER_TYPES).error.code, ERRORS.BAD_FIELD);
+});

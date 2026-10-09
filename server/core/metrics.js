@@ -5,7 +5,7 @@
 // (hub.emit('message', ...)), and this file alone decides what to count. Remove it and the chat
 // works exactly the same. It has three sources:
 //
-//   1. hub events        message / delivered / acked / synced / failure  -> counters, rate, latency
+//   1. hub events        message / delivered / acked / synced / failure / group -> counters, rate, latency
 //   2. TCP sockets       trackSocket(socket, protocol) from server/index.js -> connections, bytes
 //   3. live state        hub.users, store.counts() read at snapshot time  -> online users, DB totals
 //
@@ -102,7 +102,11 @@ function emptyProtocolStats() {
     connectionsTotal: 0,     // TCP connections ever upgraded on this path (counter)
     closedBytesIn: 0,        // bytes of connections that already closed
     closedBytesOut: 0,
-    messages: { sent: 0, delivered: 0, stored: 0, duplicate: 0, received: 0, synced: 0 },
+    // sent and group count LOGICAL messages (a group message = 1). delivered and stored count
+    // RECIPIENT COPIES (a group message to 3 others, 2 online = delivered 2 + stored 1), so for
+    // 1-to-1 they are exactly what they were in Step 6.
+    messages: { sent: 0, group: 0, delivered: 0, stored: 0, duplicate: 0, received: 0, synced: 0 },
+    groupChanges: 0,         // membership changes: create / add / leave (Step 7)
     errors: {},              // ChatProto error code -> count
     rate: new RateWindow(),  // new messages sent per second
     ackLatency: new Samples(),
@@ -133,6 +137,7 @@ class Metrics {
       this.p[e.protocol].deliverLatency.add(this.now() - e.receivedAt);
     });
     hub.on('synced', e => { this.p[e.protocol].messages.synced += e.count; });
+    hub.on('group', e => { this.p[e.protocol].groupChanges++; });
     hub.on('failure', e => {
       const errors = this.p[e.protocol].errors;
       errors[e.code] = (errors[e.code] || 0) + 1;
@@ -144,11 +149,14 @@ class Metrics {
   }
 
   // A chat message from a sender of protocol e.protocol: status delivered | stored | duplicate.
-  onMessage({ protocol, status }) {
+  // recipients / delivered: copies to deliver and how many went out live (1-to-1: 1 and 1 or 0).
+  onMessage({ protocol, status, group = false, recipients = 1, delivered = status === 'delivered' ? 1 : 0 }) {
     const s = this.p[protocol];
-    s.messages[status]++;
-    if (status === 'duplicate') return; // a retry is not a new message
+    if (status === 'duplicate') { s.messages.duplicate++; return; } // a retry is not a new message
     s.messages.sent++;
+    if (group) s.messages.group++;
+    s.messages.delivered += delivered;
+    s.messages.stored += recipients - delivered;
     s.rate.add(this.second());
   }
 
@@ -190,6 +198,7 @@ class Metrics {
         rate: Math.round(s.rate.rate(second) * 10) / 10,
         history: s.rate.history(second),
         messages: { ...s.messages },
+        groupChanges: s.groupChanges,
         errors: { ...s.errors },
         errorsTotal: Object.values(s.errors).reduce((a, b) => a + b, 0),
         bytes: { in: bytesIn, out: bytesOut },

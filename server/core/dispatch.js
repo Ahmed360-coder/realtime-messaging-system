@@ -3,6 +3,7 @@
 // handleFrame(), and replies go back through session.deliver(). So both protocols run exactly
 // the same join / sync / send / list logic and give exactly the same answers and errors.
 // Step 6: it also announces 'acked' and 'failure' on the hub (see hub.js) for the metrics.
+// Step 7: MSG to a '#group' goes to hub.sendGroup; GROUP (create / add / leave) to hub.changeGroup.
 
 const { performance } = require('node:perf_hooks');
 const ChatProto = require('../../protocols/chatproto');
@@ -54,15 +55,28 @@ function handleMessage(hub, session, msg, receivedAt) {
     }
     case TYPES.MSG: {
       // The hub stores the message (or recognises a retry) BEFORE we send the ACK.
-      const res = hub.sendDirect(session, msg, receivedAt);
+      // The address decides the route: '#name' = group (Step 7), otherwise 1-to-1.
+      const res = ChatProto.isGroup(msg.to) ? hub.sendGroup(session, msg, receivedAt) : hub.sendDirect(session, msg, receivedAt);
       if (!res.ok) return fail(res.code, res.message);
-      const ack = ChatProto.make(TYPES.ACK, { body: { ref: msg.id, seq: res.seq, status: res.status } });
       // The callback runs once the transport has written the ACK to the sender's connection.
-      return session.deliver(ack, () => hub.emit('acked', { protocol: session.protocol, receivedAt }));
+      return session.deliver(ackFor(msg, res), () => hub.emit('acked', { protocol: session.protocol, receivedAt }));
+    }
+    case TYPES.GROUP: {
+      // Step 7: create / add / leave. Stored (with a seq) before the ACK, like a MSG.
+      const res = hub.changeGroup(session, msg);
+      if (!res.ok) return fail(res.code, res.message);
+      return reply(ackFor(msg, res));
     }
     case TYPES.LIST:
       return reply(ChatProto.make(TYPES.USERS, { body: { users: hub.onlineUsers(), known: hub.knownUsers() } }));
   }
+}
+
+// ACK { ref, seq, status }; for a group also { recipients, delivered } ("delivered to 2 of 3").
+function ackFor(msg, res) {
+  const body = { ref: msg.id, seq: res.seq, status: res.status };
+  if (res.recipients !== undefined) Object.assign(body, { recipients: res.recipients, delivered: res.delivered });
+  return ChatProto.make(TYPES.ACK, { body });
 }
 
 // Every ERROR reply goes through here, so each one is also announced as a 'failure'.

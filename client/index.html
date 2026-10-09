@@ -51,20 +51,25 @@
           <h1 id="listTitle">Chats</h1>
           <span class="subtitle">signed in as <span id="meName"></span> · <span id="meProtocol"></span></span>
         </div>
+        <!-- Step 7: create a group -->
+        <button type="button" id="newGroupBtn" class="pill-btn">+ Group</button>
         <button type="button" class="icon-btn debug-toggle" aria-label="Show debug panel" aria-pressed="false">{ }</button>
       </header>
       <ul id="contactList" class="contacts"></ul>
       <p id="noContacts" class="empty" hidden>No one else has joined yet.<br>Open this page on another phone.</p>
     </section>
 
-    <!-- 3. One conversation -->
+    <!-- 3. One conversation (a contact or a group) -->
     <section id="chatView" class="view" aria-labelledby="chatName" hidden>
       <header class="bar">
-        <button type="button" id="backBtn" class="icon-btn" aria-label="Back to chats">‹</button>
+        <button type="button" id="backBtn" class="icon-btn back" aria-label="Back to chats">‹</button>
         <div class="bar-title">
           <h2 id="chatName"></h2>
           <span id="chatPresence" class="subtitle"></span>
         </div>
+        <!-- Step 7: only shown in a group -->
+        <button type="button" id="addMembersBtn" class="pill-btn" hidden>+ Add</button>
+        <button type="button" id="leaveBtn" class="pill-btn danger" hidden>Leave</button>
         <button type="button" class="icon-btn debug-toggle" aria-label="Show debug panel" aria-pressed="false">{ }</button>
       </header>
       <ol id="messageList" class="messages" aria-label="Messages"></ol>
@@ -72,6 +77,35 @@
         <label for="text" class="sr-only">Message</label>
         <input id="text" maxlength="2000" autocomplete="off" enterkeyhint="send" placeholder="Message">
         <button id="sendBtn" class="send" aria-label="Send">➤</button>
+      </form>
+    </section>
+
+    <!-- 4. Step 7: new group, or add people to the open group (same form, two modes) -->
+    <section id="groupView" class="view" aria-labelledby="groupTitle" hidden>
+      <header class="bar">
+        <button type="button" id="groupBackBtn" class="icon-btn back" aria-label="Cancel">‹</button>
+        <div class="bar-title">
+          <h2 id="groupTitle"></h2>
+          <span id="groupSubtitle" class="subtitle"></span>
+        </div>
+      </header>
+      <form id="groupForm" class="group-form" novalidate>
+        <div id="groupNameRow" class="group-name">
+          <label for="groupName">Group name</label>
+          <div class="hash-input">
+            <span aria-hidden="true">#</span>
+            <input id="groupName" maxlength="20" autocomplete="off" autocapitalize="off" spellcheck="false"
+                   pattern="[A-Za-z0-9_]{1,20}" aria-describedby="groupNameHelp groupError">
+          </div>
+          <p id="groupNameHelp" class="hint">1–20 letters, digits or _ . Only members can read it; any member can add people.</p>
+        </div>
+        <fieldset class="pick">
+          <legend id="pickLegend">Add people</legend>
+          <ul id="pickList" class="pick-list"></ul>
+          <p id="pickEmpty" class="hint" hidden>No one else to add.</p>
+        </fieldset>
+        <p id="groupError" class="error" role="alert"></p>
+        <button id="groupSubmit" class="primary"></button>
       </form>
     </section>
 

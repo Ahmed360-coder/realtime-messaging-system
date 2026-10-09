@@ -32,11 +32,14 @@
     'Messages',
     ['Per second (10 s avg)', p => p.rate.toFixed(1)],
     ['Sent (new)', p => int(p.messages.sent)],
-    ['…delivered live', p => int(p.messages.delivered)],
-    ['…stored for offline user', p => int(p.messages.stored)],
+    ['…of them to groups', p => int(p.messages.group)],
+    // Step 7: counted per RECIPIENT copy (a group message to 3 others counts 3); 1-to-1 = 1 copy.
+    ['Copies delivered live', p => int(p.messages.delivered)],
+    ['Copies stored for offline', p => int(p.messages.stored)],
     ['Duplicates (retries)', p => int(p.messages.duplicate)],
     ['Received live', p => int(p.messages.received)],
     ['Replayed by sync', p => int(p.messages.synced)],
+    ['Group changes', p => int(p.groupChanges)],
     ['Errors', p => int(p.errorsTotal)],
     'Traffic on TCP',
     ['Bytes in', p => bytes(p.bytes.in)],
@@ -160,6 +163,7 @@
     fillList($('database'), db ? [
       [`Messages stored: ${int(db.messages)}`],
       [`Registered users: ${int(db.users)}`],
+      [`Groups: ${int(db.groups)}`],
       [`Last seq: ${int(db.lastSeq)}`],
     ] : [], 'Not available');
 

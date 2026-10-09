@@ -72,7 +72,7 @@ test('messagesFor returns messages to/from a user after a seq, in order', () => 
   assert.deepEqual(s.messagesFor('bob', a1).map(m => m.body), ['b->a', 'a->b 2']);
   assert.deepEqual(s.messagesFor('bob', a2), []);
   const [m] = s.messagesFor('bob', b1);
-  assert.deepEqual(Object.keys(m).sort(), ['body', 'from', 'id', 'seq', 'to', 'ts']);
+  assert.deepEqual(Object.keys(m).sort(), ['body', 'from', 'id', 'kind', 'seq', 'to', 'ts']);
   s.close();
 });
 
@@ -117,5 +117,101 @@ test('transaction() rolls back every write if anything throws', () => {
     throw new Error('boom');
   }), /boom/);
   assert.equal(s.messagesFor('bob').length, 0);
+  s.close();
+});
+
+// ---- Step 7: groups ----
+
+const { DatabaseSync } = require('node:sqlite');
+const { SCHEMA_VERSION } = require('../server/core/store');
+
+// A database file exactly as Steps 3-6 created it (schema version 0).
+function oldSchemaFile(file) {
+  const db = new DatabaseSync(file);
+  db.exec(`
+    CREATE TABLE users (username TEXT PRIMARY KEY, token_hash TEXT NOT NULL, created_at INTEGER NOT NULL, last_seen INTEGER NOT NULL);
+    CREATE TABLE messages (
+      seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE,
+      sender TEXT NOT NULL REFERENCES users(username), recipient TEXT NOT NULL REFERENCES users(username),
+      body TEXT NOT NULL, ts INTEGER NOT NULL, stored_at INTEGER NOT NULL);
+    CREATE INDEX messages_by_recipient ON messages(recipient, seq);
+    CREATE INDEX messages_by_sender ON messages(sender, seq);`);
+  db.close();
+}
+
+test('migration: an old chat.db keeps its users, messages and seq counter', () => {
+  const { file, cleanup } = tempDbPath();
+  try {
+    oldSchemaFile(file);
+    // Fill it through the old columns, then delete the newest row (the counter must not go back).
+    const old = new DatabaseSync(file);
+    old.exec("INSERT INTO users VALUES ('alice', 'h', 1, 1), ('bob', 'h', 1, 1)");
+    for (let i = 1; i <= 3; i++) {
+      old.prepare('INSERT INTO messages (id, sender, recipient, body, ts, stored_at) VALUES (?, ?, ?, ?, ?, ?)')
+        .run(`old-${i}`, 'alice', 'bob', `old ${i}`, i, i);
+    }
+    old.exec('DELETE FROM messages WHERE seq = 3');
+    assert.equal(old.prepare('PRAGMA user_version').get().user_version, 0);
+    old.close();
+
+    const s = new Store(file);
+    assert.equal(s.db.prepare('PRAGMA user_version').get().user_version, SCHEMA_VERSION);
+    assert.deepEqual(s.messagesFor('bob').map(m => [m.seq, m.kind, m.body]), [[1, 'text', 'old 1'], [2, 'text', 'old 2']]);
+    assert.ok(s.saveMessage(msg('bob', 'alice', 'new')).seq > 3, 'seq 3 was handed out before: never again');
+    // The new constraints are in place: a group message to a group that does not exist is refused.
+    assert.throws(() => s.saveMessage(msg('alice', '#nope', 'x')), /FOREIGN KEY/);
+    s.close();
+    // Opening it again does not migrate twice.
+    const again = new Store(file);
+    assert.equal(again.messagesFor('bob').length, 3);
+    again.close();
+  } finally {
+    cleanup();
+  }
+});
+
+test('groups: create, members with joined_seq, one stored row per group message', () => {
+  const s = freshStore();
+  s.claimUser('carol', 'token-carol-0123456789');
+  s.createGroup('#g', 'alice');
+  const created = s.saveMessage({ ...msg('alice', '#g', '{"users":["bob"],"members":["alice","bob"]}'), kind: 'create' }).seq;
+  s.addMembers('#g', ['alice', 'bob'], created);
+  assert.deepEqual(s.getGroup('#g'), { name: '#g', createdBy: 'alice' });
+  assert.equal(s.getGroup('#other'), null);
+  assert.deepEqual(s.groupMembers('#g'), ['alice', 'bob']);
+  assert.deepEqual(s.groupsOf('bob'), ['#g']);
+
+  const hello = s.saveMessage(msg('bob', '#g', 'hello group')).seq;
+  assert.equal(s.db.prepare("SELECT COUNT(*) AS n FROM messages WHERE group_name = '#g' AND kind = 'text'").get().n, 1);
+  // A message must have exactly one address.
+  assert.throws(() => s.db.prepare("INSERT INTO messages (id, sender, recipient, group_name, body, ts, stored_at) VALUES ('x', 'alice', 'bob', '#g', 'b', 1, 1)").run(), /CHECK/);
+  assert.equal(s.counts().groups, 1);
+
+  // carol joins later: she sees the group from the event that added her, not before.
+  const added = s.saveMessage({ ...msg('bob', '#g', '{"users":["carol"],"members":["alice","bob","carol"]}'), kind: 'add' }).seq;
+  s.addMembers('#g', ['carol'], added);
+  const after = s.saveMessage(msg('alice', '#g', 'welcome carol')).seq;
+  assert.deepEqual(s.messagesFor('carol').map(m => m.seq), [added, after]);
+  assert.deepEqual(s.messagesFor('bob').map(m => m.seq), [created, hello, added, after]);
+  assert.deepEqual(s.messagesFor('bob', hello).map(m => m.kind), ['add', 'text']);
+  assert.equal(s.messagesFor('carol')[0].to, '#g');
+
+  // After leaving, the group is no longer replayed (and a fresh device does not see it).
+  s.removeMember('#g', 'bob');
+  assert.deepEqual(s.messagesFor('bob'), []);
+  s.close();
+});
+
+test('sync merges 1-to-1 and group messages into one seq order', () => {
+  const s = freshStore();
+  s.createGroup('#g', 'alice');
+  const c = s.saveMessage({ ...msg('alice', '#g', '{"users":["bob"],"members":["alice","bob"]}'), kind: 'create' }).seq;
+  s.addMembers('#g', ['alice', 'bob'], c);
+  const a = s.saveMessage(msg('alice', 'bob', 'dm 1')).seq;
+  const b = s.saveMessage(msg('bob', '#g', 'group 1')).seq;
+  const d = s.saveMessage(msg('bob', 'alice', 'dm 2')).seq;
+  const e = s.saveMessage(msg('alice', '#g', 'group 2')).seq;
+  assert.deepEqual(s.messagesFor('bob').map(m => m.seq), [c, a, b, d, e]);
+  assert.deepEqual(s.messagesFor('bob', b).map(m => m.body), ['dm 2', 'group 2']);
   s.close();
 });

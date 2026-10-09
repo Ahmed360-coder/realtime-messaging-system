@@ -85,10 +85,28 @@
       this.sendFrame(hello);
     }
 
-    /** Send a chat message reliably. Returns the message (its id identifies it in later events). */
+    /**
+     * Send a chat message reliably. `to` is a username or a group ('#study').
+     * Returns the message (its id identifies it in later events).
+     */
     send(to, body) {
       const msg = ChatProto.make(TYPES.MSG, { to, body });
       this.seen.add(msg.id); // if the server ever replays our own message to us, ignore it
+      return this.enqueue(msg);
+    }
+
+    /**
+     * Step 7: change a group, op = 'create' | 'add' | 'leave'. It goes through the same outbox as
+     * a MSG (retried until ACKed, saved across a reload, dedup by id on the server). Its id is NOT
+     * marked as seen: the server sends the change back to us as a GROUP event (with the new member
+     * list), and that event is how the page learns the result, the same way as every other member.
+     */
+    changeGroup(op, group, users = []) {
+      const body = op === 'leave' ? { op } : { op, users };
+      return this.enqueue(ChatProto.make(TYPES.GROUP, { to: group, body }));
+    }
+
+    enqueue(msg) {
       this.pending.set(msg.id, { msg, attempts: 0, timer: null });
       this.emit('outbox', this.outbox());
       this.transmit(msg.id);
@@ -108,7 +126,7 @@
     restore(msgs) {
       for (const msg of msgs) {
         if (this.pending.has(msg.id)) continue;
-        this.seen.add(msg.id);
+        if (msg.type === TYPES.MSG) this.seen.add(msg.id); // a GROUP change must still be applied when it comes back
         this.pending.set(msg.id, { msg, attempts: 0, timer: null });
       }
     }
@@ -171,6 +189,14 @@
           if (this.seen.has(msg.id)) return this.emit('duplicate', msg);
           this.seen.add(msg.id);
           return this.emit('message', msg);
+
+        case TYPES.GROUP:
+          // A membership change (Step 7): part of the same seq stream as MSG, so it moves the
+          // sync cursor and is deduplicated the same way. A replayed one adds nothing new.
+          if (msg.seq > this.lastSeq) this.lastSeq = msg.seq;
+          if (this.seen.has(msg.id)) return;
+          this.seen.add(msg.id);
+          return this.emit('group', msg);
 
         case TYPES.ACK: {
           const p = this.pending.get(msg.body.ref);

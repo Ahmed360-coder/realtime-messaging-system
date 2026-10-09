@@ -9,6 +9,9 @@
 //     "from": "alice", "to": "bob", "body": "hi", "seq": 42 }
 // `id` is chosen by the sender (used for dedup); `seq` is assigned by the server when it
 // stores the message (used for ordering and offline sync).
+//
+// Addresses (Step 7): `to` is either a username ("bob", 1-to-1) or a group ("#study").
+// A username can never contain '#', so the address alone says which kind it is.
 
 (function (root, factory) {
   // Works in Node (CommonJS) and in the browser (global ChatProto).
@@ -23,8 +26,11 @@
   const TYPES = {
     // client -> server
     HELLO: 'HELLO',       // join the chat:          body = { username, token, lastSeq }
-    MSG: 'MSG',           // 1-to-1 chat message:    to, body = text (server adds from)
+    MSG: 'MSG',           // chat message:           to = user or #group, body = text (server adds from)
     LIST: 'LIST',         // ask for online users
+    // both directions (Step 7)
+    GROUP: 'GROUP',       // membership change:      to = #group, body = { op: create|add|leave, users }
+                          //   server -> members: + from (who did it), seq, body.members (after the change)
     // server -> client
     WELCOME: 'WELCOME',   // join accepted:          body = { username, users, known }
     SYNCED: 'SYNCED',     // offline replay done:    body = { count, lastSeq }
@@ -34,8 +40,15 @@
     ERROR: 'ERROR',       // something was wrong:    body = { code, message, ref }
     BYE: 'BYE',           // server closes us (MQTT): body = { code, reason } (see CLOSE_REPLACED)
   };
-  const CLIENT_TYPES = new Set([TYPES.HELLO, TYPES.MSG, TYPES.LIST]);
-  const SERVER_TYPES = new Set([TYPES.WELCOME, TYPES.SYNCED, TYPES.MSG, TYPES.ACK, TYPES.PRESENCE, TYPES.USERS, TYPES.ERROR, TYPES.BYE]);
+  const CLIENT_TYPES = new Set([TYPES.HELLO, TYPES.MSG, TYPES.LIST, TYPES.GROUP]);
+  const SERVER_TYPES = new Set([TYPES.WELCOME, TYPES.SYNCED, TYPES.MSG, TYPES.ACK, TYPES.PRESENCE, TYPES.USERS, TYPES.ERROR, TYPES.BYE, TYPES.GROUP]);
+
+  // Membership operations carried in GROUP.body.op (Step 7). Groups are invite-only:
+  //   create  anyone; the creator + body.users become the members
+  //   add     any member may add registered users
+  //   leave   any member may leave (there is no kick and no admin)
+  const GROUP_OPS = ['create', 'add', 'leave'];
+  const MAX_GROUP_MEMBERS = 50; // caps the fan-out: one group message = at most 49 copies
 
   // Error codes carried in ERROR.body.code.
   const ERRORS = {
@@ -48,6 +61,11 @@
     ALREADY_JOINED: 'ALREADY_JOINED',
     NAME_TAKEN: 'NAME_TAKEN',     // username is registered to a different token
     UNKNOWN_USER: 'UNKNOWN_USER', // recipient never joined (offline users are fine: stored)
+    // Step 7: groups
+    UNKNOWN_GROUP: 'UNKNOWN_GROUP', // no group with that name
+    NOT_MEMBER: 'NOT_MEMBER',       // only members may send to / add to / leave a group
+    GROUP_EXISTS: 'GROUP_EXISTS',   // create: the name is taken
+    GROUP_FULL: 'GROUP_FULL',       // the group would have more than MAX_GROUP_MEMBERS members
   };
 
   // WebSocket close code (4000-4999 = application-defined) sent to an old connection when
@@ -60,6 +78,8 @@
   const MAX_FRAME_BYTES = 16 * 1024; // whole encoded frame
   const MAX_BODY_CHARS = 2000;       // chat text
   const USERNAME_RE = /^[A-Za-z0-9_]{1,20}$/;
+  const GROUP_RE = /^#[A-Za-z0-9_]{1,20}$/; // a group address: '#' + the same characters
+  const isGroup = to => typeof to === 'string' && GROUP_RE.test(to);
   const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const TOKEN_RE = /^[A-Za-z0-9_-]{16,128}$/; // random secret: "same device as last time"
   const isSeq = x => Number.isSafeInteger(x) && x >= 0;
@@ -134,7 +154,7 @@
           return 'HELLO body.lastSeq must be an integer >= 0';
         return null;
       case TYPES.MSG:
-        if (typeof msg.to !== 'string' || !USERNAME_RE.test(msg.to)) return 'MSG to must be a valid username';
+        if (typeof msg.to !== 'string' || !(USERNAME_RE.test(msg.to) || isGroup(msg.to))) return 'MSG to must be a username or #group';
         if (typeof msg.body !== 'string' || msg.body.trim() === '') return 'MSG body must be non-empty text';
         if (msg.body.length > MAX_BODY_CHARS) return `MSG body longer than ${MAX_BODY_CHARS} characters`;
         // Only the server assigns seq (a client's seq is ignored), but it must be well-formed.
@@ -142,6 +162,22 @@
         return null;
       case TYPES.LIST:
         return null;
+      case TYPES.GROUP: {
+        if (!isGroup(msg.to)) return 'GROUP to must be #name (1-20 letters, digits or _)';
+        const b = msg.body;
+        if (!isPlainObject(b) || !GROUP_OPS.includes(b.op)) return `GROUP body.op must be one of ${GROUP_OPS.join('|')}`;
+        if (b.op !== 'leave') {
+          if (!Array.isArray(b.users) || !b.users.every(u => typeof u === 'string' && USERNAME_RE.test(u)))
+            return 'GROUP body.users must be an array of usernames';
+          if (b.users.length > MAX_GROUP_MEMBERS) return `a group has at most ${MAX_GROUP_MEMBERS} members`;
+          if (b.op === 'add' && b.users.length === 0) return 'GROUP add needs at least one user';
+        }
+        // From the server it also lists who is in the group after the change.
+        if (b.members !== undefined && (!Array.isArray(b.members) || !b.members.every(u => typeof u === 'string')))
+          return 'GROUP body.members must be an array of usernames';
+        if (msg.seq !== undefined && !isSeq(msg.seq)) return 'GROUP seq must be an integer >= 0';
+        return null;
+      }
       case TYPES.WELCOME:
       case TYPES.USERS:
         if (!isPlainObject(msg.body) || !Array.isArray(msg.body.users)) return `${msg.type} body.users must be an array`;
@@ -153,6 +189,9 @@
       case TYPES.ACK:
         if (!isPlainObject(msg.body) || typeof msg.body.ref !== 'string') return 'ACK body.ref must be the acknowledged id';
         if (!isSeq(msg.body.seq)) return 'ACK body.seq must be the stored sequence number';
+        // Group messages (Step 7): how many members got it live, out of how many.
+        if (msg.body.recipients !== undefined && (!isSeq(msg.body.recipients) || !isSeq(msg.body.delivered)))
+          return 'ACK body.recipients and body.delivered must be integers >= 0';
         return null;
       case TYPES.PRESENCE:
         if (!isPlainObject(msg.body) || typeof msg.body.username !== 'string' ||
@@ -176,7 +215,7 @@
 
   return {
     VERSION, TYPES, CLIENT_TYPES, SERVER_TYPES, ERRORS, CLOSE_REPLACED,
-    MAX_FRAME_BYTES, MAX_BODY_CHARS, USERNAME_RE, TOKEN_RE,
-    uuid, make, encode, decode, error,
+    MAX_FRAME_BYTES, MAX_BODY_CHARS, USERNAME_RE, TOKEN_RE, GROUP_RE, GROUP_OPS, MAX_GROUP_MEMBERS,
+    uuid, make, encode, decode, error, isGroup,
   };
 });
