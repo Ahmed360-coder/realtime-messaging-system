@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 420" role="img" aria-label="Throughput: one sender → one receiver">
+<title>Throughput: one sender → one receiver</title>
+<style>
+  .bg { fill: #fcfcfb } .t1 { fill: #0b0b0b } .t2 { fill: #52514e } .grid { stroke: #e4e3df } .axis { stroke: #8a8984 }
+  .s1 { stroke: #2a78d6; fill: #2a78d6 } .s2 { stroke: #eb6834; fill: #eb6834 } .s3 { stroke: #8a8984; fill: #8a8984 }
+  .whisker { stroke: #0b0b0b } .gap { stroke: #fcfcfb }
+  @media (prefers-color-scheme: dark) {
+    .bg { fill: #1a1a19 } .t1 { fill: #ffffff } .t2 { fill: #c3c2b7 } .grid { stroke: #34332f } .axis { stroke: #77766f }
+    .s1 { stroke: #3987e5; fill: #3987e5 } .s2 { stroke: #d95926; fill: #d95926 } .s3 { stroke: #9a9992; fill: #9a9992 }
+    .whisker { stroke: #ffffff } .gap { stroke: #1a1a19 }
+  }
+  text { font-family: system-ui, -apple-system, "Segoe UI", sans-serif }</style>
+<rect class="bg" width="720" height="420"/>
+<text class="t1" x="70" y="26" font-size="17" font-weight="600">Throughput: one sender → one receiver</text>
+<text class="t2" x="70" y="46" font-size="12.5">2000 messages, at most 50 un-ACKed; bar = mean of 5 runs, whisker = lowest–highest run</text>
+<rect class="s1" x="74" y="58" width="12" height="12" rx="2"/><text class="t1" x="98" y="68" font-size="12.5">WebSocket</text>
+<rect class="s2" x="187" y="58" width="12" height="12" rx="2"/><text class="t1" x="211" y="68" font-size="12.5">MQTT over WebSocket</text>
+<line class="grid" x1="70" x2="696" y1="364" y2="364"/>
+<text class="t2" x="62" y="368" font-size="11.5" text-anchor="end">0</text>
+<line class="grid" x1="70" x2="696" y1="308.4" y2="308.4"/>
+<text class="t2" x="62" y="312.4" font-size="11.5" text-anchor="end">100</text>
+<line class="grid" x1="70" x2="696" y1="252.8" y2="252.8"/>
+<text class="t2" x="62" y="256.8" font-size="11.5" text-anchor="end">200</text>
+<line class="grid" x1="70" x2="696" y1="197.20000000000002" y2="197.20000000000002"/>
+<text class="t2" x="62" y="201.20000000000002" font-size="11.5" text-anchor="end">300</text>
+<line class="grid" x1="70" x2="696" y1="141.6" y2="141.6"/>
+<text class="t2" x="62" y="145.6" font-size="11.5" text-anchor="end">400</text>
+<line class="grid" x1="70" x2="696" y1="86" y2="86"/>
+<text class="t2" x="62" y="90" font-size="11.5" text-anchor="end">500</text>
+<line class="axis" x1="70" x2="696" y1="364" y2="364"/>
+<text class="t1" x="383" y="384" font-size="12.5" text-anchor="middle">messages / s</text>
+<path class="s1" d="M320,364V128.10824000000002Q320,124.10824000000002 324,124.10824000000002H378Q382,124.10824000000002 382,128.10824000000002V364Z" style="stroke:none"><title>WebSocket, messages / s: 431 (runs 357–458)</title></path>
+<path class="whisker" d="M351,165.67480000000003V109.24080000000001M346,165.67480000000003H356M346,109.24080000000001H356" stroke-width="1.5" fill="none"/>
+<text class="t1" x="351" y="103.24080000000001" font-size="11.5" text-anchor="middle">431</text>
+<path class="s2" d="M384,364V156.35304Q384,152.35304 388,152.35304H442Q446,152.35304 446,156.35304V364Z" style="stroke:none"><title>MQTT over WebSocket, messages / s: 381 (runs 339–431)</title></path>
+<path class="whisker" d="M415,175.4604V124.58639999999997M410,175.4604H420M410,124.58639999999997H420" stroke-width="1.5" fill="none"/>
+<text class="t1" x="415" y="118.58639999999997" font-size="11.5" text-anchor="middle">381</text>
+<text class="t2" x="383" y="406" font-size="12.5" text-anchor="middle"></text>
+<text class="t2" transform="translate(18 225) rotate(-90)" font-size="12.5" text-anchor="middle">messages per second</text>
+</svg>

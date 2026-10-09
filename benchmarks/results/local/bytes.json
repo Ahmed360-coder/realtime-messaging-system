@@ -1,0 +1,128 @@
+{
+  "experiment": "bytes",
+  "environment": {
+    "date": "2026-10-09T14:19:04.359Z",
+    "node": "v24.19.0",
+    "os": "Windows_NT 10.0.26300 (x64)",
+    "cpu": "12th Gen Intel(R) Core(TM) i5-12500H",
+    "cores": 16,
+    "memoryGB": 16,
+    "server": "child process on http://127.0.0.1:3109, temp DB C:\\Users\\solid\\AppData\\Local\\Temp\\chat-bench.db",
+    "path": "loopback (127.0.0.1): client and server on the same laptop"
+  },
+  "config": {
+    "sizes": [
+      16,
+      64,
+      256,
+      1024
+    ],
+    "count": 100
+  },
+  "summary": [
+    {
+      "protocol": "ws",
+      "text_chars": 16,
+      "messages": 100,
+      "wire_in_per_msg": 130,
+      "wire_out_per_msg": 331,
+      "wire_total_per_msg": 461,
+      "json_up": 124,
+      "json_ack": 170,
+      "json_down": 153,
+      "json_total": 447,
+      "overhead_per_msg": 14
+    },
+    {
+      "protocol": "ws",
+      "text_chars": 64,
+      "messages": 100,
+      "wire_in_per_msg": 180,
+      "wire_out_per_msg": 379,
+      "wire_total_per_msg": 559,
+      "json_up": 172,
+      "json_ack": 170,
+      "json_down": 201,
+      "json_total": 543,
+      "overhead_per_msg": 16
+    },
+    {
+      "protocol": "ws",
+      "text_chars": 256,
+      "messages": 100,
+      "wire_in_per_msg": 372,
+      "wire_out_per_msg": 571,
+      "wire_total_per_msg": 943,
+      "json_up": 364,
+      "json_ack": 170,
+      "json_down": 393,
+      "json_total": 927,
+      "overhead_per_msg": 16
+    },
+    {
+      "protocol": "ws",
+      "text_chars": 1024,
+      "messages": 100,
+      "wire_in_per_msg": 1140,
+      "wire_out_per_msg": 1339,
+      "wire_total_per_msg": 2479,
+      "json_up": 1132,
+      "json_ack": 170,
+      "json_down": 1161,
+      "json_total": 2463,
+      "overhead_per_msg": 16
+    },
+    {
+      "protocol": "mqtt",
+      "text_chars": 16,
+      "messages": 100,
+      "wire_in_per_msg": 257,
+      "wire_out_per_msg": 467,
+      "wire_total_per_msg": 724,
+      "json_up": 126,
+      "json_ack": 170,
+      "json_down": 157,
+      "json_total": 453,
+      "overhead_per_msg": 271
+    },
+    {
+      "protocol": "mqtt",
+      "text_chars": 64,
+      "messages": 100,
+      "wire_in_per_msg": 305,
+      "wire_out_per_msg": 515,
+      "wire_total_per_msg": 820,
+      "json_up": 174,
+      "json_ack": 170,
+      "json_down": 205,
+      "json_total": 549,
+      "overhead_per_msg": 271
+    },
+    {
+      "protocol": "mqtt",
+      "text_chars": 256,
+      "messages": 100,
+      "wire_in_per_msg": 497,
+      "wire_out_per_msg": 707,
+      "wire_total_per_msg": 1204,
+      "json_up": 366,
+      "json_ack": 170,
+      "json_down": 397,
+      "json_total": 933,
+      "overhead_per_msg": 271
+    },
+    {
+      "protocol": "mqtt",
+      "text_chars": 1024,
+      "messages": 100,
+      "wire_in_per_msg": 1265,
+      "wire_out_per_msg": 1475,
+      "wire_total_per_msg": 2740,
+      "json_up": 1134,
+      "json_ack": 170,
+      "json_down": 1165,
+      "json_total": 2469,
+      "overhead_per_msg": 271
+    }
+  ]
+}

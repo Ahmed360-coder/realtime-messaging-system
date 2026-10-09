@@ -1,0 +1,1020 @@
+{
+  "experiment": "scalability",
+  "environment": {
+    "date": "2026-10-09T14:19:04.359Z",
+    "node": "v24.19.0",
+    "os": "Windows_NT 10.0.26300 (x64)",
+    "cpu": "12th Gen Intel(R) Core(TM) i5-12500H",
+    "cores": 16,
+    "memoryGB": 16,
+    "server": "child process on http://127.0.0.1:3109, temp DB C:\\Users\\solid\\AppData\\Local\\Temp\\chat-bench.db",
+    "path": "loopback (127.0.0.1): client and server on the same laptop"
+  },
+  "config": {
+    "levels": [
+      0,
+      10,
+      50,
+      100,
+      200
+    ],
+    "runs": 3,
+    "rate": 1,
+    "warmup": 30,
+    "samples": 150
+  },
+  "summary": [
+    {
+      "protocol": "ws",
+      "clients": 0,
+      "offeredMsgPerS": 0,
+      "rtt": {
+        "n": 450,
+        "mean": 3.917,
+        "sd": 2.346,
+        "min": 1.961,
+        "p50": 3.577,
+        "p95": 5.457,
+        "p99": 15.608,
+        "max": 36.439
+      },
+      "p50AcrossRuns": {
+        "mean": 3.552,
+        "sd": 0.391,
+        "min": 3.323,
+        "max": 4.003
+      },
+      "p95AcrossRuns": {
+        "mean": 5.095,
+        "sd": 0.652,
+        "min": 4.656,
+        "max": 5.845
+      },
+      "achievedMsgPerS": 0,
+      "loadErrors": 0,
+      "loadLagP99Ms": 0
+    },
+    {
+      "protocol": "ws",
+      "clients": 10,
+      "offeredMsgPerS": 10,
+      "rtt": {
+        "n": 450,
+        "mean": 4.096,
+        "sd": 3.255,
+        "min": 2.157,
+        "p50": 3.51,
+        "p95": 5.86,
+        "p99": 20.007,
+        "max": 46.38
+      },
+      "p50AcrossRuns": {
+        "mean": 3.568,
+        "sd": 0.385,
+        "min": 3.212,
+        "max": 3.977
+      },
+      "p95AcrossRuns": {
+        "mean": 5.958,
+        "sd": 0.95,
+        "min": 5.392,
+        "max": 7.055
+      },
+      "achievedMsgPerS": 9.5,
+      "loadErrors": 0,
+      "loadLagP99Ms": 22.41
+    },
+    {
+      "protocol": "ws",
+      "clients": 50,
+      "offeredMsgPerS": 50,
+      "rtt": {
+        "n": 450,
+        "mean": 4.319,
+        "sd": 2.258,
+        "min": 2.068,
+        "p50": 3.85,
+        "p95": 7.448,
+        "p99": 16.094,
+        "max": 27.216
+      },
+      "p50AcrossRuns": {
+        "mean": 3.804,
+        "sd": 0.694,
+        "min": 3.264,
+        "max": 4.587
+      },
+      "p95AcrossRuns": {
+        "mean": 7.111,
+        "sd": 0.9,
+        "min": 6.326,
+        "max": 8.093
+      },
+      "achievedMsgPerS": 51,
+      "loadErrors": 0,
+      "loadLagP99Ms": 24.36
+    },
+    {
+      "protocol": "ws",
+      "clients": 100,
+      "offeredMsgPerS": 100,
+      "rtt": {
+        "n": 450,
+        "mean": 5.992,
+        "sd": 4.295,
+        "min": 2.198,
+        "p50": 4.802,
+        "p95": 12.696,
+        "p99": 24.296,
+        "max": 41.606
+      },
+      "p50AcrossRuns": {
+        "mean": 4.848,
+        "sd": 0.805,
+        "min": 4.364,
+        "max": 5.777
+      },
+      "p95AcrossRuns": {
+        "mean": 12.83,
+        "sd": 4.22,
+        "min": 10.163,
+        "max": 17.696
+      },
+      "achievedMsgPerS": 98.4,
+      "loadErrors": 0,
+      "loadLagP99Ms": 25.02
+    },
+    {
+      "protocol": "ws",
+      "clients": 200,
+      "offeredMsgPerS": 200,
+      "rtt": {
+        "n": 450,
+        "mean": 9.787,
+        "sd": 10.198,
+        "min": 2.999,
+        "p50": 5.31,
+        "p95": 29.861,
+        "p99": 56.578,
+        "max": 78.952
+      },
+      "p50AcrossRuns": {
+        "mean": 5.343,
+        "sd": 0.83,
+        "min": 4.662,
+        "max": 6.267
+      },
+      "p95AcrossRuns": {
+        "mean": 27.376,
+        "sd": 5.373,
+        "min": 22.551,
+        "max": 33.166
+      },
+      "achievedMsgPerS": 196.4,
+      "loadErrors": 0,
+      "loadLagP99Ms": 24.3
+    },
+    {
+      "protocol": "mqtt",
+      "clients": 0,
+      "offeredMsgPerS": 0,
+      "rtt": {
+        "n": 450,
+        "mean": 4.61,
+        "sd": 1.932,
+        "min": 2.862,
+        "p50": 4.302,
+        "p95": 6.255,
+        "p99": 16.496,
+        "max": 21.782
+      },
+      "p50AcrossRuns": {
+        "mean": 4.283,
+        "sd": 0.082,
+        "min": 4.201,
+        "max": 4.365
+      },
+      "p95AcrossRuns": {
+        "mean": 6.182,
+        "sd": 0.11,
+        "min": 6.056,
+        "max": 6.256
+      },
+      "achievedMsgPerS": 0,
+      "loadErrors": 0,
+      "loadLagP99Ms": 0
+    },
+    {
+      "protocol": "mqtt",
+      "clients": 10,
+      "offeredMsgPerS": 10,
+      "rtt": {
+        "n": 450,
+        "mean": 4.889,
+        "sd": 2.453,
+        "min": 2.745,
+        "p50": 4.326,
+        "p95": 7.781,
+        "p99": 17.344,
+        "max": 27.872
+      },
+      "p50AcrossRuns": {
+        "mean": 4.407,
+        "sd": 0.632,
+        "min": 3.946,
+        "max": 5.127
+      },
+      "p95AcrossRuns": {
+        "mean": 7.154,
+        "sd": 1.25,
+        "min": 6.217,
+        "max": 8.574
+      },
+      "achievedMsgPerS": 10.3,
+      "loadErrors": 0,
+      "loadLagP99Ms": 22.69
+    },
+    {
+      "protocol": "mqtt",
+      "clients": 50,
+      "offeredMsgPerS": 50,
+      "rtt": {
+        "n": 450,
+        "mean": 4.952,
+        "sd": 2.19,
+        "min": 2.516,
+        "p50": 4.406,
+        "p95": 9.072,
+        "p99": 14.102,
+        "max": 22.509
+      },
+      "p50AcrossRuns": {
+        "mean": 4.329,
+        "sd": 0.522,
+        "min": 3.741,
+        "max": 4.737
+      },
+      "p95AcrossRuns": {
+        "mean": 9.039,
+        "sd": 0.773,
+        "min": 8.155,
+        "max": 9.583
+      },
+      "achievedMsgPerS": 48.7,
+      "loadErrors": 0,
+      "loadLagP99Ms": 23.61
+    },
+    {
+      "protocol": "mqtt",
+      "clients": 100,
+      "offeredMsgPerS": 100,
+      "rtt": {
+        "n": 450,
+        "mean": 7.356,
+        "sd": 5.932,
+        "min": 2.515,
+        "p50": 5.482,
+        "p95": 20.473,
+        "p99": 30.8,
+        "max": 62.53
+      },
+      "p50AcrossRuns": {
+        "mean": 5.457,
+        "sd": 2.018,
+        "min": 3.81,
+        "max": 7.708
+      },
+      "p95AcrossRuns": {
+        "mean": 16.438,
+        "sd": 9.342,
+        "min": 9.452,
+        "max": 27.049
+      },
+      "achievedMsgPerS": 99.1,
+      "loadErrors": 0,
+      "loadLagP99Ms": 24.89
+    },
+    {
+      "protocol": "mqtt",
+      "clients": 200,
+      "offeredMsgPerS": 200,
+      "rtt": {
+        "n": 450,
+        "mean": 21.953,
+        "sd": 29.836,
+        "min": 3.315,
+        "p50": 7.877,
+        "p95": 91.329,
+        "p99": 147.664,
+        "max": 170.531
+      },
+      "p50AcrossRuns": {
+        "mean": 7.695,
+        "sd": 2.266,
+        "min": 5.2,
+        "max": 9.625
+      },
+      "p95AcrossRuns": {
+        "mean": 79.523,
+        "sd": 47.836,
+        "min": 29.154,
+        "max": 124.343
+      },
+      "achievedMsgPerS": 198.6,
+      "loadErrors": 0,
+      "loadLagP99Ms": 24.2
+    }
+  ],
+  "runs": [
+    {
+      "protocol": "ws",
+      "clients": 0,
+      "run": 0,
+      "rtt": {
+        "n": 150,
+        "mean": 4.482,
+        "sd": 3.006,
+        "min": 2.42,
+        "p50": 4.003,
+        "p95": 5.845,
+        "p99": 18.478,
+        "max": 36.439
+      },
+      "load": {
+        "sent": 0,
+        "acked": 0,
+        "errors": 0,
+        "seconds": 0,
+        "achievedMsgPerS": 0,
+        "lagP99Ms": null
+      }
+    },
+    {
+      "protocol": "mqtt",
+      "clients": 0,
+      "run": 0,
+      "rtt": {
+        "n": 150,
+        "mean": 4.635,
+        "sd": 1.713,
+        "min": 2.937,
+        "p50": 4.365,
+        "p95": 6.256,
+        "p99": 16.496,
+        "max": 18.453
+      },
+      "load": {
+        "sent": 0,
+        "acked": 0,
+        "errors": 0,
+        "seconds": 0,
+        "achievedMsgPerS": 0,
+        "lagP99Ms": null
+      }
+    },
+    {
+      "protocol": "mqtt",
+      "clients": 0,
+      "run": 1,
+      "rtt": {
+        "n": 150,
+        "mean": 4.53,
+        "sd": 1.748,
+        "min": 2.862,
+        "p50": 4.201,
+        "p95": 6.234,
+        "p99": 14.209,
+        "max": 20.174
+      },
+      "load": {
+        "sent": 0,
+        "acked": 0,
+        "errors": 0,
+        "seconds": 0,
+        "achievedMsgPerS": 0,
+        "lagP99Ms": null
+      }
+    },
+    {
+      "protocol": "ws",
+      "clients": 0,
+      "run": 1,
+      "rtt": {
+        "n": 150,
+        "mean": 3.65,
+        "sd": 1.848,
+        "min": 2.291,
+        "p50": 3.33,
+        "p95": 4.785,
+        "p99": 15.608,
+        "max": 16.135
+      },
+      "load": {
+        "sent": 0,
+        "acked": 0,
+        "errors": 0,
+        "seconds": 0,
+        "achievedMsgPerS": 0,
+        "lagP99Ms": null
+      }
+    },
+    {
+      "protocol": "ws",
+      "clients": 0,
+      "run": 2,
+      "rtt": {
+        "n": 150,
+        "mean": 3.621,
+        "sd": 1.913,
+        "min": 1.961,
+        "p50": 3.323,
+        "p95": 4.656,
+        "p99": 11.668,
+        "max": 23.285
+      },
+      "load": {
+        "sent": 0,
+        "acked": 0,
+        "errors": 0,
+        "seconds": 0,
+        "achievedMsgPerS": 0,
+        "lagP99Ms": null
+      }
+    },
+    {
+      "protocol": "mqtt",
+      "clients": 0,
+      "run": 2,
+      "rtt": {
+        "n": 150,
+        "mean": 4.665,
+        "sd": 2.292,
+        "min": 2.881,
+        "p50": 4.283,
+        "p95": 6.056,
+        "p99": 21.035,
+        "max": 21.782
+      },
+      "load": {
+        "sent": 0,
+        "acked": 0,
+        "errors": 0,
+        "seconds": 0,
+        "achievedMsgPerS": 0,
+        "lagP99Ms": null
+      }
+    },
+    {
+      "protocol": "ws",
+      "clients": 10,
+      "run": 0,
+      "rtt": {
+        "n": 150,
+        "mean": 4.174,
+        "sd": 3.945,
+        "min": 2.36,
+        "p50": 3.514,
+        "p95": 5.427,
+        "p99": 22.441,
+        "max": 46.38
+      },
+      "load": {
+        "sent": 7,
+        "acked": 7,
+        "errors": 0,
+        "seconds": 0.8,
+        "achievedMsgPerS": 8.8,
+        "lagP99Ms": 22.23
+      }
+    },
+    {
+      "protocol": "mqtt",
+      "clients": 10,
+      "run": 0,
+      "rtt": {
+        "n": 150,
+        "mean": 4.327,
+        "sd": 1.645,
+        "min": 2.745,
+        "p50": 3.946,
+        "p95": 6.217,
+        "p99": 12.373,
+        "max": 17.344
+      },
+      "load": {
+        "sent": 10,
+        "acked": 10,
+        "errors": 0,
+        "seconds": 1,
+        "achievedMsgPerS": 9.9,
+        "lagP99Ms": 22.69
+      }
+    },
+    {
+      "protocol": "mqtt",
+      "clients": 10,
+      "run": 1,
+      "rtt": {
+        "n": 150,
+        "mean": 5.764,
+        "sd": 3.238,
+        "min": 2.983,
+        "p50": 5.127,
+        "p95": 8.574,
+        "p99": 27.717,
+        "max": 27.872
+      },
+      "load": {
+        "sent": 16,
+        "acked": 16,
+        "errors": 0,
+        "seconds": 1.5,
+        "achievedMsgPerS": 10.6,
+        "lagP99Ms": 21.41
+      }
+    },
+    {
+      "protocol": "ws",
+      "clients": 10,
+      "run": 1,
+      "rtt": {
+        "n": 150,
+        "mean": 3.502,
+        "sd": 1.377,
+        "min": 2.157,
+        "p50": 3.212,
+        "p95": 5.392,
+        "p99": 11.819,
+        "max": 12.805
+      },
+      "load": {
+        "sent": 6,
+        "acked": 6,
+        "errors": 0,
+        "seconds": 0.7,
+        "achievedMsgPerS": 8.7,
+        "lagP99Ms": 20.59
+      }
+    },
+    {
+      "protocol": "ws",
+      "clients": 10,
+      "run": 2,
+      "rtt": {
+        "n": 150,
+        "mean": 4.612,
+        "sd": 3.72,
+        "min": 2.437,
+        "p50": 3.977,
+        "p95": 7.055,
+        "p99": 21.67,
+        "max": 40.809
+      },
+      "load": {
+        "sent": 10,
+        "acked": 10,
+        "errors": 0,
+        "seconds": 0.9,
+        "achievedMsgPerS": 10.9,
+        "lagP99Ms": 22.41
+      }
+    },
+    {
+      "protocol": "mqtt",
+      "clients": 10,
+      "run": 2,
+      "rtt": {
+        "n": 150,
+        "mean": 4.575,
+        "sd": 1.936,
+        "min": 2.765,
+        "p50": 4.147,
+        "p95": 6.672,
+        "p99": 15.706,
+        "max": 21.12
+      },
+      "load": {
+        "sent": 12,
+        "acked": 12,
+        "errors": 0,
+        "seconds": 1.2,
+        "achievedMsgPerS": 10.4,
+        "lagP99Ms": 20.41
+      }
+    },
+    {
+      "protocol": "ws",
+      "clients": 50,
+      "run": 0,
+      "rtt": {
+        "n": 150,
+        "mean": 3.714,
+        "sd": 1.681,
+        "min": 2.068,
+        "p50": 3.264,
+        "p95": 6.326,
+        "p99": 11.803,
+        "max": 11.945
+      },
+      "load": {
+        "sent": 40,
+        "acked": 40,
+        "errors": 0,
+        "seconds": 0.8,
+        "achievedMsgPerS": 52,
+        "lagP99Ms": 23.99
+      }
+    },
+    {
+      "protocol": "mqtt",
+      "clients": 50,
+      "run": 0,
+      "rtt": {
+        "n": 150,
+        "mean": 4.384,
+        "sd": 2.194,
+        "min": 2.516,
+        "p50": 3.741,
+        "p95": 8.155,
+        "p99": 13.344,
+        "max": 22.509
+      },
+      "load": {
+        "sent": 57,
+        "acked": 57,
+        "errors": 0,
+        "seconds": 1.2,
+        "achievedMsgPerS": 48,
+        "lagP99Ms": 21.86
+      }
+    },
+    {
+      "protocol": "mqtt",
+      "clients": 50,
+      "run": 1,
+      "rtt": {
+        "n": 150,
+        "mean": 5.174,
+        "sd": 2.067,
+        "min": 3.125,
+        "p50": 4.51,
+        "p95": 9.38,
+        "p99": 14.228,
+        "max": 17.908
+      },
+      "load": {
+        "sent": 68,
+        "acked": 68,
+        "errors": 0,
+        "seconds": 1.4,
+        "achievedMsgPerS": 49.7,
+        "lagP99Ms": 23.12
+      }
+    },
+    {
+      "protocol": "ws",
+      "clients": 50,
+      "run": 1,
+      "rtt": {
+        "n": 150,
+        "mean": 4.071,
+        "sd": 2.019,
+        "min": 2.354,
+        "p50": 3.56,
+        "p95": 6.915,
+        "p99": 16.094,
+        "max": 16.11
+      },
+      "load": {
+        "sent": 42,
+        "acked": 42,
+        "errors": 0,
+        "seconds": 0.8,
+        "achievedMsgPerS": 50.7,
+        "lagP99Ms": 24.36
+      }
+    },
+    {
+      "protocol": "ws",
+      "clients": 50,
+      "run": 2,
+      "rtt": {
+        "n": 150,
+        "mean": 5.173,
+        "sd": 2.701,
+        "min": 2.552,
+        "p50": 4.587,
+        "p95": 8.093,
+        "p99": 18.196,
+        "max": 27.216
+      },
+      "load": {
+        "sent": 50,
+        "acked": 50,
+        "errors": 0,
+        "seconds": 1,
+        "achievedMsgPerS": 50.3,
+        "lagP99Ms": 21.15
+      }
+    },
+    {
+      "protocol": "mqtt",
+      "clients": 50,
+      "run": 2,
+      "rtt": {
+        "n": 150,
+        "mean": 5.299,
+        "sd": 2.207,
+        "min": 2.835,
+        "p50": 4.737,
+        "p95": 9.583,
+        "p99": 14.102,
+        "max": 18.417
+      },
+      "load": {
+        "sent": 73,
+        "acked": 73,
+        "errors": 0,
+        "seconds": 1.5,
+        "achievedMsgPerS": 48.5,
+        "lagP99Ms": 23.61
+      }
+    },
+    {
+      "protocol": "ws",
+      "clients": 100,
+      "run": 0,
+      "rtt": {
+        "n": 150,
+        "mean": 5.034,
+        "sd": 2.893,
+        "min": 2.198,
+        "p50": 4.364,
+        "p95": 10.632,
+        "p99": 15.452,
+        "max": 24.296
+      },
+      "load": {
+        "sent": 105,
+        "acked": 105,
+        "errors": 0,
+        "seconds": 1.1,
+        "achievedMsgPerS": 99.9,
+        "lagP99Ms": 23.13
+      }
+    },
+    {
+      "protocol": "mqtt",
+      "clients": 100,
+      "run": 0,
+      "rtt": {
+        "n": 150,
+        "mean": 6.003,
+        "sd": 3.535,
+        "min": 2.877,
+        "p50": 4.853,
+        "p95": 12.813,
+        "p99": 22.592,
+        "max": 24.564
+      },
+      "load": {
+        "sent": 767,
+        "acked": 767,
+        "errors": 0,
+        "seconds": 7.7,
+        "achievedMsgPerS": 99.9,
+        "lagP99Ms": 23.61
+      }
+    },
+    {
+      "protocol": "mqtt",
+      "clients": 100,
+      "run": 1,
+      "rtt": {
+        "n": 150,
+        "mean": 4.6,
+        "sd": 2.638,
+        "min": 2.515,
+        "p50": 3.81,
+        "p95": 9.452,
+        "p99": 14.78,
+        "max": 24.425
+      },
+      "load": {
+        "sent": 149,
+        "acked": 149,
+        "errors": 0,
+        "seconds": 1.5,
+        "achievedMsgPerS": 97.6,
+        "lagP99Ms": 24.04
+      }
+    },
+    {
+      "protocol": "ws",
+      "clients": 100,
+      "run": 1,
+      "rtt": {
+        "n": 150,
+        "mean": 5.179,
+        "sd": 3.053,
+        "min": 2.363,
+        "p50": 4.402,
+        "p95": 10.163,
+        "p99": 21.624,
+        "max": 23.353
+      },
+      "load": {
+        "sent": 104,
+        "acked": 104,
+        "errors": 0,
+        "seconds": 1.1,
+        "achievedMsgPerS": 97.9,
+        "lagP99Ms": 22.45
+      }
+    },
+    {
+      "protocol": "ws",
+      "clients": 100,
+      "run": 2,
+      "rtt": {
+        "n": 150,
+        "mean": 7.763,
+        "sd": 5.758,
+        "min": 3.051,
+        "p50": 5.777,
+        "p95": 17.696,
+        "p99": 35.567,
+        "max": 41.606
+      },
+      "load": {
+        "sent": 181,
+        "acked": 181,
+        "errors": 0,
+        "seconds": 1.9,
+        "achievedMsgPerS": 97.5,
+        "lagP99Ms": 25.02
+      }
+    },
+    {
+      "protocol": "mqtt",
+      "clients": 100,
+      "run": 2,
+      "rtt": {
+        "n": 150,
+        "mean": 11.465,
+        "sd": 7.752,
+        "min": 5.338,
+        "p50": 7.708,
+        "p95": 27.049,
+        "p99": 32.741,
+        "max": 62.53
+      },
+      "load": {
+        "sent": 414,
+        "acked": 414,
+        "errors": 0,
+        "seconds": 4.2,
+        "achievedMsgPerS": 99.7,
+        "lagP99Ms": 24.89
+      }
+    },
+    {
+      "protocol": "ws",
+      "clients": 200,
+      "run": 0,
+      "rtt": {
+        "n": 150,
+        "mean": 11.821,
+        "sd": 11.531,
+        "min": 3.903,
+        "p50": 6.267,
+        "p95": 33.166,
+        "p99": 71.182,
+        "max": 71.592
+      },
+      "load": {
+        "sent": 539,
+        "acked": 539,
+        "errors": 0,
+        "seconds": 2.7,
+        "achievedMsgPerS": 197.2,
+        "lagP99Ms": 23.66
+      }
+    },
+    {
+      "protocol": "mqtt",
+      "clients": 200,
+      "run": 0,
+      "rtt": {
+        "n": 150,
+        "mean": 9.208,
+        "sd": 8.459,
+        "min": 3.315,
+        "p50": 5.2,
+        "p95": 29.154,
+        "p99": 42.913,
+        "max": 49.747
+      },
+      "load": {
+        "sent": 1273,
+        "acked": 1272,
+        "errors": 0,
+        "seconds": 6.4,
+        "achievedMsgPerS": 197.5,
+        "lagP99Ms": 23.84
+      }
+    },
+    {
+      "protocol": "mqtt",
+      "clients": 200,
+      "run": 1,
+      "rtt": {
+        "n": 150,
+        "mean": 22.941,
+        "sd": 26.465,
+        "min": 4.686,
+        "p50": 8.261,
+        "p95": 85.072,
+        "p99": 124.312,
+        "max": 128.279
+      },
+      "load": {
+        "sent": 2002,
+        "acked": 2002,
+        "errors": 0,
+        "seconds": 10.1,
+        "achievedMsgPerS": 199.1,
+        "lagP99Ms": 24.2
+      }
+    },
+    {
+      "protocol": "ws",
+      "clients": 200,
+      "run": 1,
+      "rtt": {
+        "n": 150,
+        "mean": 8.814,
+        "sd": 9.065,
+        "min": 3.13,
+        "p50": 5.099,
+        "p95": 26.41,
+        "p99": 32.767,
+        "max": 78.952
+      },
+      "load": {
+        "sent": 480,
+        "acked": 480,
+        "errors": 0,
+        "seconds": 2.5,
+        "achievedMsgPerS": 193.7,
+        "lagP99Ms": 24.3
+      }
+    },
+    {
+      "protocol": "ws",
+      "clients": 200,
+      "run": 2,
+      "rtt": {
+        "n": 150,
+        "mean": 8.726,
+        "sd": 9.591,
+        "min": 2.999,
+        "p50": 4.662,
+        "p95": 22.551,
+        "p99": 56.578,
+        "max": 68.41
+      },
+      "load": {
+        "sent": 472,
+        "acked": 472,
+        "errors": 0,
+        "seconds": 2.4,
+        "achievedMsgPerS": 198.2,
+        "lagP99Ms": 22.56
+      }
+    },
+    {
+      "protocol": "mqtt",
+      "clients": 200,
+      "run": 2,
+      "rtt": {
+        "n": 150,
+        "mean": 33.711,
+        "sd": 40.087,
+        "min": 5.291,
+        "p50": 9.625,
+        "p95": 124.343,
+        "p99": 165.423,
+        "max": 170.531
+      },
+      "load": {
+        "sent": 3801,
+        "acked": 3801,
+        "errors": 0,
+        "seconds": 19.1,
+        "achievedMsgPerS": 199.2,
+        "lagP99Ms": 23.66
+      }
+    }
+  ]
+}

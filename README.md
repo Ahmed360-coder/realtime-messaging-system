@@ -572,10 +572,302 @@ E2E hides **content** only.
 tell a sealed body from text, but not read it. The database card shows "Messages stored: N
 (M encrypted)". Bytes on the wire now include the ciphertext overhead, for Step 9.
 
-## Performance Evaluation (planned)
-- Latency (average sender → recipient time).
-- Protocol comparison: ChatProto over WebSocket vs MQTT over WebSocket (see the table in Step 5).
-- Scalability or Wi-Fi distance (near vs far).
+## Performance Evaluation (Step 9)
+We compare our two application-layer stacks, which carry the *same* ChatProto JSON:
+**ChatProto over WebSocket** (`/ws`) and **ChatProto over MQTT over WebSocket** (`/mqtt`).
+Both use the same hub, SQLite store, ACKs and sync, so any difference comes from the transport.
+
+### Method
+**Setup.** Everything runs on one laptop: Intel i5-12500H (16 threads), 16 GB, Windows 11,
+Node 24.19.0. There are three processes:
+- **Server.** `benchmarks/run.js` starts `node server/index.js` as a **child process** on port 3109,
+  with a **fresh temporary database** (`PORT` / `DB_PATH`). The real `chat.db` is never touched.
+- **Probe.** The runner process holds two clients, A and B, which do the timing.
+- **Load generator.** For the scalability test, a third process (`benchmarks/load.js`) runs the
+  background clients.
+
+Client and server talk over **loopback** (`127.0.0.1`). The numbers are therefore the cost of our
+software stack *without* Wi-Fi radio time.
+
+**What one sample is.**
+- **Latency = round trip on one clock.**
+  - A sends a `MSG` to B, and B immediately sends the same text back. A times the whole trip
+    A → server → B → server → A with `performance.now()`.
+  - That is a monotonic, sub-millisecond clock, and the same one is read at both ends, so no clock
+    synchronisation is needed. Phones cannot measure one-way time: their clocks are off by more than
+    the latency.
+  - A round trip contains **two** messages, each stored in SQLite before it is forwarded.
+  - A also records its **ACK time**: A → server (stored) → ACK back to A.
+- **One message at a time** (closed loop). The next ping is sent only after the previous echo
+  arrived, so no queue can build up inside our measurement.
+- **Warm-up.** The first messages of every run are sent but not recorded: 50 for latency, 200 for
+  throughput, 10 for groups, 3 connections for setup. Before they run, V8 has not compiled the hot
+  code yet (JIT) and SQLite's page cache is cold.
+- **Independent runs.** Every run opens new connections. The protocol order alternates (WS first,
+  then MQTT first …), so a slow drift of the laptop cannot favour one protocol.
+- **Statistics.** We report:
+  - the mean and the sample standard deviation (sd);
+  - the **nearest-rank percentiles** p50 (median), p95 and p99;
+  - min and max;
+  - for latency, also the **run-to-run spread** (the same percentile computed per run). A difference
+    smaller than that spread is not a difference.
+
+  Latency is right-skewed (a garbage-collection pause or a slow disk write adds a long tail), so the
+  median and the tail say more than the mean.
+- **Bytes on the wire** come from the Step 6 counters (`/api/stats`): `socket.bytesRead` /
+  `bytesWritten` of every upgraded TCP connection. That includes the HTTP Upgrade, WebSocket frame
+  headers, MQTT headers and topics, PUBACKs, pings and JSON, but **not** the TCP/IP headers that the OS
+  adds (~40–52 B per segment).
+- **Nagle is off.** Node's HTTP server and the `ws` library call `socket.setNoDelay()`
+  (TCP_NODELAY) on every socket (`ws/lib/websocket.js`). A small frame is sent at once instead of
+  waiting up to ~40–200 ms to be merged with the next one. That is why round trips are ~5 ms, not
+  ~40 ms.
+
+**Not measured.**
+- Wi-Fi radio time and distance. `--url` makes the same scripts run against a remote server, but we
+  had no second computer to run them from, so we report **scalability** instead (the brief allows
+  either).
+- The phone's CPU, browser and page rendering.
+- Decryption time on the receivers.
+- The latency of a message to an offline user (it waits for their next sync).
+
+Raw samples: `benchmarks/results/local/*.csv`. Summaries with the exact configuration and
+environment: `*.json`. Reproduce:
+- `node benchmarks/run.js` (≈ 5 minutes);
+- `--only=latency,bytes` for some experiments only;
+- `--quick` for a smoke test;
+- `node benchmarks/charts.js` redraws the charts from the saved JSON.
+
+Code (no new dependencies):
+- `benchmarks/run.js`: the runner and the experiment sizes;
+- `benchmarks/experiments.js`: the seven experiments;
+- `benchmarks/load.js`: the background-load process;
+- `benchmarks/lib/client.js`: a minimal ChatProto client over either protocol, which records the
+  setup phases;
+- `benchmarks/lib/server.js`: starts or attaches to the server and reads `/api/stats`;
+- `benchmarks/lib/stats.js`: mean, sd, percentiles, CDF;
+- `benchmarks/lib/svg.js` + `benchmarks/charts.js`: the SVG charts.
+
+Tests: `tests/benchmarks.test.js` (the statistics, plus every experiment end to end with tiny counts).
+
+### 1. Latency
+
+![Round-trip CDF](benchmarks/results/local/charts/latency-cdf.svg)
+![Round-trip percentiles](benchmarks/results/local/charts/latency-percentiles.svg)
+
+5 runs × 300 round trips per protocol after 50 warm-up, 64-character text. Times in ms.
+
+| | mean ± sd | p50 | p95 | p99 | max | p50 run-to-run (sd, range) | ACK p50 / p95 | server ACK p50 (Step 6) |
+|---|---|---|---|---|---|---|---|---|
+| WebSocket | 4.93 ± 1.70 | **4.76** | 5.97 | 13.8 | 28.3 | 0.09 (4.63–4.85) | 2.57 / 3.43 | 2.09 |
+| MQTT over WS | 6.83 ± 2.03 | **6.53** | 8.44 | 17.6 | 39.7 | 0.54 (6.08–7.26) | 3.79 / 5.08 | 2.97 |
+
+- **MQTT adds ≈ 1.8 ms per round trip (+37 % at p50), ≈ 0.9 ms per message.** The gap is 3–20 times
+  larger than the run-to-run spread of the medians, and the two CDFs do not overlap until the top
+  ~2 %. It is a real difference.
+- At **p99** the two overlap: the runs range from 8.4 to 18.3 ms (WS) and from 13.4 to 19.6 ms
+  (MQTT). Those 1-in-100 messages are dominated by events that hit both protocols, such as a slow disk
+  flush, not by the protocol.
+- **Where the time goes** (the WebSocket ACK, 2.57 ms):
+  - 2.09 ms inside the server (the Step 6 metric);
+  - of that, **1.65 ms is the SQLite write with fsync** (experiment 7 below);
+  - the remaining ≈ 0.5 ms is the client libraries plus loopback.
+
+  The cost of "ACK = on disk" is thus most of the latency, and it is the same for both protocols.
+- **Why MQTT is slower:**
+  - more work per message: an extra PUBACK packet per hop;
+  - topic matching and the broker's packet queue in Aedes;
+  - its packets are written as many small WebSocket frames (see 3).
+
+  Its server-side ACK time is 0.9 ms higher (2.97 vs 2.09).
+
+### 2. Throughput
+
+![Throughput](benchmarks/results/local/charts/throughput.svg)
+
+One sender, one receiver, 2000 messages per run, at most 50 un-ACKed; 5 runs.
+
+| | mean ± sd (msg/s) | lowest–highest run |
+|---|---|---|
+| WebSocket | **431 ± 42** | 357–458 |
+| MQTT over WS | **381 ± 38** | 339–431 |
+
+- The ceiling is the **disk**, not the network. Each message is one SQLite commit with fsync, about
+  1.9 ms on average, so one server thread cannot exceed about 1000 / 1.9 ≈ **525 msg/s** whatever
+  the protocol.
+- WebSocket reaches 82 % of that bound and MQTT 73 %, because of its extra per-message work.
+- The run-to-run spread is large (± 10 %): fsync time depends on what Windows and the SSD are doing.
+  So "WS is faster" holds on average, but the worst WS run was slower than the best MQTT run.
+- Batching several messages into one commit (group commit) would raise the ceiling, at the cost of
+  a slightly later ACK.
+
+### 3. Bytes on the wire per message
+
+![Bytes per message](benchmarks/results/local/charts/bytes-per-message.svg)
+
+A 1-to-1 message is three frames: `MSG` up, `ACK` back to the sender, `MSG` down to the recipient.
+Measured over 100 messages per row:
+
+| text | JSON of the 3 frames | WebSocket total | WS overhead | MQTT total | MQTT overhead | MQTT / WS |
+|---|---|---|---|---|---|---|
+| 16 chars | 447 B | 461 B | 14 B | 724 B | 271 B | 1.57 × |
+| 64 | 543 | 559 | 16 | 820 | 271 | 1.47 × |
+| 256 | 927 | 943 | 16 | 1204 | 271 | 1.28 × |
+| 1024 | 2463 | 2479 | 16 | 2740 | 271 | 1.11 × |
+
+- The overhead does **not** grow with the text. It is a fixed cost per message, so it matters most
+  for short chat messages, which is what a chat mostly sends.
+- **WebSocket overhead:** 2–8 B of frame header per frame. Client frames are masked: +4 B.
+  Frames over 125 B: +2 B of length.
+- **MQTT overhead, accounted byte by byte.** For the 16-character row this predicts 255 B in and 463 B
+  out; we measured 257 and 467 (2–4 B apart). The parts are:
+  - topic names of 42 / 44 / 44 B (`chat/<clientId>/up|down`), the biggest part;
+  - 2 B of topic length, 2 B of packet id, and 1 + 2 B of fixed header per PUBLISH;
+  - **three PUBACKs** of 4 B (one per hop);
+  - and a finding we did not predict in Step 5: **mqtt.js and Aedes write each PUBLISH as 6
+    separate WebSocket frames** (fixed header, length, topic length, topic, packet id, payload) and
+    each PUBACK as 3. Every frame pays its own 2–6 B WebSocket header, which adds ≈ 80 B per message.
+
+  Step 5 predicted ≈ 50 B more per PUBLISH plus small PUBACKs, ≈ 180 B per message. The measured
+  extra is 257 B, and the frame splitting is the difference.
+- On a real network each of those small frames may also become its own TCP segment, with
+  ~40–52 B of TCP/IP headers. Loopback does not show this; it would need a packet capture.
+
+### 4. Connection setup
+
+![Connection setup](benchmarks/results/local/charts/setup.svg)
+
+Time from the start of `connect()` until each phase completes, 5 runs × 20 reconnections of an
+already registered user, no history to replay. Times in ms.
+
+| | connected | subscribed | `WELCOME` | `SYNCED` p50 / p95 / mean ± sd | bytes up / down |
+|---|---|---|---|---|---|
+| WebSocket | 1.96 (TCP + HTTP Upgrade) | – | 4.70 | **4.97** / 6.46 / 5.17 ± 2.25 | 388 / 571 |
+| MQTT over WS | 3.18 (+ CONNECT/CONNACK) | 4.16 (SUBSCRIBE/SUBACK) | 7.73 | **7.95** / 11.55 / 8.83 ± 6.30 | 734 / 762 |
+
+- MQTT needs the 2 extra round trips predicted in Step 5 (`CONNECT`/`CONNACK`, `SUBSCRIBE`/`SUBACK`)
+  before our `HELLO` can be sent.
+- It ends **3 ms later (+60 %)** and costs **1496 vs 959 bytes (+56 %)**.
+- About half of the setup time is the `HELLO` itself: the token check and the join write in SQLite.
+- On Wi-Fi every extra round trip costs a full radio RTT (typically 2–10 ms), so the gap would
+  grow there. This matters for phones that reconnect often (screen off, network change).
+
+### 5. Group size and end-to-end encryption
+
+![Fan-out bytes](benchmarks/results/local/charts/group-bytes.svg)
+![Fan-out time](benchmarks/results/local/charts/group-fanout.svg)
+
+For each protocol and group size, all members are online. The sender sends 10 warm-up + 100
+messages per mode:
+- **plain:** the Step 7 text body;
+- **E2E:** the Step 8 sealed body, `{nonce, box, keys}`.
+
+*Frame* = the sender's `MSG` in bytes. *Out* = server bytes sent per message: N − 1 copies + the ACK
+(+ PUBACKs). *Fan-out* = send → the last member has it (p50). *Seal* = the sender's `sealGroup()`
+time (p50). The `keys` part grows by about N × 122 B.
+
+| members | frame plain → E2E | out WS plain → E2E | out MQTT plain → E2E | fan-out WS plain / E2E (ms) | fan-out MQTT plain / E2E (ms) | seal (ms) |
+|---|---|---|---|---|---|---|
+| 2 | 172 → 655 B | 407 B → 890 B | 543 B → 1.0 KB | 1.70 / 2.21 | 2.20 / 2.95 | 1.8 |
+| 5 | 172 → 1015 B | 1.0 KB → 4.4 KB | 1.4 KB → 4.8 KB | 1.86 / 1.98 | 3.28 / 3.55 | 3.3 |
+| 10 | 173 → 1630 B | 2.1 KB → 15 KB | 2.7 KB → 16 KB | 1.64 / 2.09 | 2.44 / 3.58 | 6.5 |
+| 20 | 173 → 2850 B | 4.1 KB → 55 KB | 5.4 KB → 57 KB | 2.26 / 2.85 | 4.52 / 5.18 | 17.9 |
+| 50 | 173 → 6510 B | 10 KB → 321 KB | 14 KB → 329 KB | 2.10 / 3.88 | 6.96 / 7.64 | 36.6 |
+
+- **Bytes.**
+  - Plain fan-out bytes grow **linearly** with N: one copy per member.
+  - With E2E, every copy also carries every member's key box. So the bytes grow with
+    **N × (N − 1)**, roughly quadratically: ×31 at 50 members (321 KB per message).
+  - This is the price of scheme (B) from Step 8: no group key and no re-keying, but a frame that
+    grows with the group.
+  - Up to the 50-member cap a sealed frame still fits the 16 KB limit (6.5 KB). But one message
+    makes the server send 321 KB, which takes ≈ 2.6 s on a 1 Mbit/s share of Wi-Fi. Bigger groups would need a shared group key
+    (scheme C).
+- **Server time.**
+  - WebSocket fan-out stays at ≈ 2 ms up to 50 members: writing 49 frames is cheap next to the
+    fsync.
+  - MQTT grows by ≈ 0.1 ms per member (2.2 → 7.0 ms): every copy is a broker PUBLISH, with a
+    packet id and a PUBACK to process.
+  - E2E adds little server time (the server never decrypts). At 50 members it adds about 1.8 ms,
+    for copying 300 KB.
+- **Sender time.**
+  - Sealing costs ≈ 0.7 ms **per member** on the laptop (37 ms for 50), several times more on a
+    phone.
+  - `nacl.box` redoes the Curve25519 key agreement for each member on every message.
+  - **Improvement found:** cache each member's shared key with `nacl.box.before()` once and use
+    `nacl.box.after()`. That makes it a symmetric operation (microseconds). Not changed in this
+    step.
+
+### 6. Scalability: many simultaneous clients
+
+![Scalability](benchmarks/results/local/charts/scalability.svg)
+
+The probe pair measures round trips (30 warm-up + 150 samples, 3 runs) while K **other** clients of
+the same protocol each send 1 message per second to a partner. That is K msg/s of background chat,
+each message stored with fsync. RTT in ms:
+
+| K clients | offered load | WS p50 | WS p95 | WS p99 | MQTT p50 | MQTT p95 | MQTT p99 | achieved load WS / MQTT | errors |
+|---|---|---|---|---|---|---|---|---|---|
+| 0 | 0 msg/s | 3.58 | 5.46 | 15.6 | 4.30 | 6.26 | 16.5 | – | 0 |
+| 10 | 10 | 3.51 | 5.86 | 20.0 | 4.33 | 7.78 | 17.3 | 9.5 / 10.3 | 0 |
+| 50 | 50 | 3.85 | 7.45 | 16.1 | 4.41 | 9.07 | 14.1 | 51 / 48.7 | 0 |
+| 100 | 100 | 4.80 | 12.7 | 24.3 | 5.48 | 20.5 | 30.8 | 98.4 / 99.1 | 0 |
+| 200 | 200 | 5.31 | **29.9** | 56.6 | 7.88 | **91.3** | 148 | 196 / 199 | 0 |
+
+- **No errors, no lost messages, and the median barely moves** (+48 % WS, +83 % MQTT at 200
+  clients). The server handled 200 simultaneous clients plus the probe on each protocol.
+- **The tail grows first, and it grows like a queue.**
+  - The server is one thread, and each stored message blocks it for ≈ 2 ms (WS) / ≈ 3 ms (MQTT)
+    of SQLite + fsync.
+  - At 200 msg/s it is busy ≈ 40 % (WS) / ≈ 60 % (MQTT) of the time. A probe message that arrives
+    behind a few others waits for them.
+  - Queueing theory says the waiting time grows like ρ / (1 − ρ), where ρ is the utilisation. That
+    is why MQTT's p95 jumps from 20 to 91 ms between 100 and 200 clients while WebSocket's goes from
+    13 to 30 ms.
+  - MQTT reaches the "knee" of the curve earlier because each of its messages costs more server time.
+- **The load generator kept up.** It achieved its offered rate (196–199 of 200 msg/s), so the slow
+  tail is the server, not our measuring tool.
+  - Its event-loop delay p99 of ≈ 22–25 ms at every level is the Windows timer resolution
+    (~15.6 ms), not overload.
+- **Caveat.** The K = 0 baseline here (3.6 ms WS) is lower than in experiment 1 (4.8 ms). The code is
+  the same; the two experiments ran minutes apart, and laptop CPU frequency and power state change
+  absolute times. So compare WS vs MQTT and K vs K **within** one experiment, not across experiments.
+
+### 7. Storage (where the server's time goes)
+
+`Store.saveMessage()` (our server code) on a temp file, 1000 inserts after 50 warm-up:
+
+| `PRAGMA synchronous` | p50 | p95 | p99 | mean ± sd |
+|---|---|---|---|---|
+| `FULL` (what the server uses: wait for the disk) | **1.65 ms** | 2.44 | 5.20 | 1.90 ± 2.84 |
+| `OFF` (hand the write to the OS, no fsync) | 0.055 ms | 0.14 | 0.32 | 0.07 ± 0.06 |
+
+- The fsync is **≈ 97 %** of the cost of storing a message, and **≈ 79 %** of the server's whole
+  WebSocket ACK time (1.65 of 2.09 ms).
+- It is our deliberate trade-off from Step 3: an ACK means the message survives a power cut.
+  `synchronous=NORMAL` in WAL mode would skip this fsync on every commit (close to the `OFF`
+  numbers; not measured separately), but could lose the last ACKed messages on power loss.
+
+### Conclusions
+- **Over loopback, ChatProto over WebSocket is consistently cheaper than ChatProto over MQTT:**
+  - −27 % latency (p50 round trip 4.8 vs 6.5 ms);
+  - +13 % throughput;
+  - −36 % bytes for a short message (461 vs 724 B);
+  - −37 % connection setup time (5.0 vs 7.9 ms);
+  - a lower tail under load (p95 30 vs 91 ms at 200 clients).
+- **This is expected.** Our app already does at the ChatProto level everything MQTT offers
+  (end-to-end ACKs, dedup, sync), so for us MQTT's QoS 1, PUBACKs, topics and broker are pure
+  overhead. MQTT's real strengths do not apply to our design:
+  - many-to-many routing without a server application (we must store and sequence every message
+    anyway);
+  - persistent sessions;
+  - small binary payloads for sensors;
+  - a standard protocol for third-party clients.
+- **Both protocols** deliver every message with no errors at 200 simultaneous clients, and the
+  latency is dominated by the fsync that makes our ACK trustworthy.
+- **End-to-end encryption** costs nothing measurable on the server, but frames grow by about
+  122 B per member, so group traffic grows with N². The sender's per-member sealing time can be
+  made ≈ 0 by caching shared keys.
 
 ## Repository Structure
 
@@ -597,7 +889,7 @@ docs/        design document and diagrams
 - [x] Step 6 – Live metrics dashboard
 - [x] Step 7 – Group chat
 - [x] Step 8 – End-to-end encryption
-- [ ] Step 9 – Benchmarks and charts
+- [x] Step 9 – Benchmarks and charts
 - [ ] Step 10 – Documentation, demo rehearsal, oral defense prep
 
 ## Running

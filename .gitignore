@@ -5,3 +5,5 @@ node_modules/
 .env
 .DS_Store
 Thumbs.db
+# Step 9: "node benchmarks/run.js --quick" only checks that the scripts work; its numbers are not results
+benchmarks/results/quick/

@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 420" role="img" aria-label="Bytes on the wire per 1-to-1 message">
+<title>Bytes on the wire per 1-to-1 message</title>
+<style>
+  .bg { fill: #fcfcfb } .t1 { fill: #0b0b0b } .t2 { fill: #52514e } .grid { stroke: #e4e3df } .axis { stroke: #8a8984 }
+  .s1 { stroke: #2a78d6; fill: #2a78d6 } .s2 { stroke: #eb6834; fill: #eb6834 } .s3 { stroke: #8a8984; fill: #8a8984 }
+  .whisker { stroke: #0b0b0b } .gap { stroke: #fcfcfb }
+  @media (prefers-color-scheme: dark) {
+    .bg { fill: #1a1a19 } .t1 { fill: #ffffff } .t2 { fill: #c3c2b7 } .grid { stroke: #34332f } .axis { stroke: #77766f }
+    .s1 { stroke: #3987e5; fill: #3987e5 } .s2 { stroke: #d95926; fill: #d95926 } .s3 { stroke: #9a9992; fill: #9a9992 }
+    .whisker { stroke: #ffffff } .gap { stroke: #1a1a19 }
+  }
+  text { font-family: system-ui, -apple-system, "Segoe UI", sans-serif }</style>
+<rect class="bg" width="720" height="420"/>
+<text class="t1" x="70" y="26" font-size="17" font-weight="600">Bytes on the wire per 1-to-1 message</text>
+<text class="t2" x="70" y="46" font-size="12.5">MSG up + ACK back + MSG down, counted by the server's TCP sockets (TCP/IP headers not included)</text>
+<line class="s1" x1="70" y1="64" x2="92" y2="64" stroke-width="2.5" /><text class="t1" x="98" y="68" font-size="12.5">WebSocket</text>
+<line class="s2" x1="183" y1="64" x2="205" y2="64" stroke-width="2.5" /><text class="t1" x="211" y="68" font-size="12.5">MQTT over WebSocket</text>
+<line class="s3" x1="366" y1="64" x2="388" y2="64" stroke-width="2.5" stroke-dasharray="6 4"/><text class="t1" x="394" y="68" font-size="12.5">JSON only</text>
+<line class="grid" x1="70" x2="696" y1="364" y2="364"/>
+<text class="t2" x="62" y="368" font-size="11.5" text-anchor="end">0</text>
+<line class="grid" x1="70" x2="696" y1="271.33333333333337" y2="271.33333333333337"/>
+<text class="t2" x="62" y="275.33333333333337" font-size="11.5" text-anchor="end">1000</text>
+<line class="grid" x1="70" x2="696" y1="178.66666666666669" y2="178.66666666666669"/>
+<text class="t2" x="62" y="182.66666666666669" font-size="11.5" text-anchor="end">2000</text>
+<line class="grid" x1="70" x2="696" y1="86" y2="86"/>
+<text class="t2" x="62" y="90" font-size="11.5" text-anchor="end">3000</text>
+<line class="axis" x1="70" x2="696" y1="364" y2="364"/>
+<text class="t2" x="70" y="382" font-size="11.5" text-anchor="middle">0</text>
+<text class="t2" x="278.66666666666663" y="382" font-size="11.5" text-anchor="middle">500</text>
+<text class="t2" x="487.3333333333333" y="382" font-size="11.5" text-anchor="middle">1000</text>
+<text class="t2" x="696" y="382" font-size="11.5" text-anchor="middle">1500</text>
+<path class="s1" d="M76.7,321.3L96.7,312.2L176.8,276.6L497.3,134.3" stroke-width="2" stroke-linejoin="round"  style="fill:none"><title>WebSocket</title></path><circle class="bg" cx="76.7" cy="321.3" r="6.5"/><circle class="s1" cx="76.7" cy="321.3" r="4.5" style="stroke:none"><title>WebSocket: 461 at 16</title></circle><circle class="bg" cx="96.7" cy="312.2" r="6.5"/><circle class="s1" cx="96.7" cy="312.2" r="4.5" style="stroke:none"><title>WebSocket: 559 at 64</title></circle><circle class="bg" cx="176.8" cy="276.6" r="6.5"/><circle class="s1" cx="176.8" cy="276.6" r="4.5" style="stroke:none"><title>WebSocket: 943 at 256</title></circle><circle class="bg" cx="497.3" cy="134.3" r="6.5"/><circle class="s1" cx="497.3" cy="134.3" r="4.5" style="stroke:none"><title>WebSocket: 2479 at 1024</title></circle>
+<path class="s2" d="M76.7,296.9L96.7,288.0L176.8,252.4L497.3,110.1" stroke-width="2" stroke-linejoin="round"  style="fill:none"><title>MQTT over WebSocket</title></path><circle class="bg" cx="76.7" cy="296.9" r="6.5"/><circle class="s2" cx="76.7" cy="296.9" r="4.5" style="stroke:none"><title>MQTT over WebSocket: 724 at 16</title></circle><circle class="bg" cx="96.7" cy="288.0" r="6.5"/><circle class="s2" cx="96.7" cy="288.0" r="4.5" style="stroke:none"><title>MQTT over WebSocket: 820 at 64</title></circle><circle class="bg" cx="176.8" cy="252.4" r="6.5"/><circle class="s2" cx="176.8" cy="252.4" r="4.5" style="stroke:none"><title>MQTT over WebSocket: 1204 at 256</title></circle><circle class="bg" cx="497.3" cy="110.1" r="6.5"/><circle class="s2" cx="497.3" cy="110.1" r="4.5" style="stroke:none"><title>MQTT over WebSocket: 2740 at 1024</title></circle>
+<path class="s3" d="M76.7,322.6L96.7,313.7L176.8,278.1L497.3,135.8" stroke-width="2" stroke-linejoin="round" stroke-dasharray="6 4" style="fill:none"><title>JSON only</title></path><circle class="bg" cx="76.7" cy="322.6" r="6.5"/><circle class="s3" cx="76.7" cy="322.6" r="4.5" style="stroke:none"><title>JSON only: 447 at 16</title></circle><circle class="bg" cx="96.7" cy="313.7" r="6.5"/><circle class="s3" cx="96.7" cy="313.7" r="4.5" style="stroke:none"><title>JSON only: 543 at 64</title></circle><circle class="bg" cx="176.8" cy="278.1" r="6.5"/><circle class="s3" cx="176.8" cy="278.1" r="4.5" style="stroke:none"><title>JSON only: 927 at 256</title></circle><circle class="bg" cx="497.3" cy="135.8" r="6.5"/><circle class="s3" cx="497.3" cy="135.8" r="4.5" style="stroke:none"><title>JSON only: 2463 at 1024</title></circle>
+<text class="t2" x="383" y="406" font-size="12.5" text-anchor="middle">text length (characters)</text>
+<text class="t2" transform="translate(18 225) rotate(-90)" font-size="12.5" text-anchor="middle">bytes per message</text>
+</svg>

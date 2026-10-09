@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 420" role="img" aria-label="Round-trip time percentiles">
+<title>Round-trip time percentiles</title>
+<style>
+  .bg { fill: #fcfcfb } .t1 { fill: #0b0b0b } .t2 { fill: #52514e } .grid { stroke: #e4e3df } .axis { stroke: #8a8984 }
+  .s1 { stroke: #2a78d6; fill: #2a78d6 } .s2 { stroke: #eb6834; fill: #eb6834 } .s3 { stroke: #8a8984; fill: #8a8984 }
+  .whisker { stroke: #0b0b0b } .gap { stroke: #fcfcfb }
+  @media (prefers-color-scheme: dark) {
+    .bg { fill: #1a1a19 } .t1 { fill: #ffffff } .t2 { fill: #c3c2b7 } .grid { stroke: #34332f } .axis { stroke: #77766f }
+    .s1 { stroke: #3987e5; fill: #3987e5 } .s2 { stroke: #d95926; fill: #d95926 } .s3 { stroke: #9a9992; fill: #9a9992 }
+    .whisker { stroke: #ffffff } .gap { stroke: #1a1a19 }
+  }
+  text { font-family: system-ui, -apple-system, "Segoe UI", sans-serif }</style>
+<rect class="bg" width="720" height="420"/>
+<text class="t1" x="70" y="26" font-size="17" font-weight="600">Round-trip time percentiles</text>
+<text class="t2" x="70" y="46" font-size="12.5">pooled over 5 runs; whisker = lowest–highest run</text>
+<rect class="s1" x="74" y="58" width="12" height="12" rx="2"/><text class="t1" x="98" y="68" font-size="12.5">WebSocket</text>
+<rect class="s2" x="187" y="58" width="12" height="12" rx="2"/><text class="t1" x="211" y="68" font-size="12.5">MQTT over WebSocket</text>
+<line class="grid" x1="70" x2="696" y1="364" y2="364"/>
+<text class="t2" x="62" y="368" font-size="11.5" text-anchor="end">0</text>
+<line class="grid" x1="70" x2="696" y1="294.5" y2="294.5"/>
+<text class="t2" x="62" y="298.5" font-size="11.5" text-anchor="end">5</text>
+<line class="grid" x1="70" x2="696" y1="225" y2="225"/>
+<text class="t2" x="62" y="229" font-size="11.5" text-anchor="end">10</text>
+<line class="grid" x1="70" x2="696" y1="155.5" y2="155.5"/>
+<text class="t2" x="62" y="159.5" font-size="11.5" text-anchor="end">15</text>
+<line class="grid" x1="70" x2="696" y1="86" y2="86"/>
+<text class="t2" x="62" y="90" font-size="11.5" text-anchor="end">20</text>
+<line class="axis" x1="70" x2="696" y1="364" y2="364"/>
+<text class="t1" x="174.33333333333331" y="384" font-size="12.5" text-anchor="middle">p50</text>
+<path class="s1" d="M111.33333333333333,364V301.7943Q111.33333333333333,297.7943 115.33333333333333,297.7943H169.33333333333331Q173.33333333333331,297.7943 173.33333333333331,301.7943V364Z" style="stroke:none"><title>WebSocket, p50: 4.763 ms (runs 4.63–4.85)</title></path>
+<path class="whisker" d="M142.33333333333331,299.6291V296.55719999999997M137.33333333333331,299.6291H147.33333333333331M137.33333333333331,296.55719999999997H147.33333333333331" stroke-width="1.5" fill="none"/>
+<text class="t1" x="142.33333333333331" y="290.55719999999997" font-size="11.5" text-anchor="middle">4.763 ms</text>
+<path class="s2" d="M175.33333333333331,364V277.3025Q175.33333333333331,273.3025 179.33333333333331,273.3025H233.33333333333331Q237.33333333333331,273.3025 237.33333333333331,277.3025V364Z" style="stroke:none"><title>MQTT over WebSocket, p50: 6.525 ms (runs 6.08–7.25)</title></path>
+<path class="whisker" d="M206.33333333333331,279.43240000000003V263.15549999999996M201.33333333333331,279.43240000000003H211.33333333333331M201.33333333333331,263.15549999999996H211.33333333333331" stroke-width="1.5" fill="none"/>
+<text class="t1" x="206.33333333333331" y="257.15549999999996" font-size="11.5" text-anchor="middle">6.525 ms</text>
+<text class="t1" x="382.99999999999994" y="384" font-size="12.5" text-anchor="middle">p95</text>
+<path class="s1" d="M319.99999999999994,364V285.0031Q319.99999999999994,281.0031 323.99999999999994,281.0031H377.99999999999994Q381.99999999999994,281.0031 381.99999999999994,285.0031V364Z" style="stroke:none"><title>WebSocket, p95: 5.971 ms (runs 5.67–6.18)</title></path>
+<path class="whisker" d="M350.99999999999994,285.1175V278.0702M345.99999999999994,285.1175H355.99999999999994M345.99999999999994,278.0702H355.99999999999994" stroke-width="1.5" fill="none"/>
+<text class="t1" x="350.99999999999994" y="272.0702" font-size="11.5" text-anchor="middle">5.971 ms</text>
+<path class="s2" d="M383.99999999999994,364V250.6979Q383.99999999999994,246.6979 387.99999999999994,246.6979H441.99999999999994Q445.99999999999994,246.6979 445.99999999999994,250.6979V364Z" style="stroke:none"><title>MQTT over WebSocket, p95: 8.439 ms (runs 7.38–9.05)</title></path>
+<path class="whisker" d="M414.99999999999994,261.40409999999997V238.21890000000002M409.99999999999994,261.40409999999997H419.99999999999994M409.99999999999994,238.21890000000002H419.99999999999994" stroke-width="1.5" fill="none"/>
+<text class="t1" x="414.99999999999994" y="232.21890000000002" font-size="11.5" text-anchor="middle">8.439 ms</text>
+<text class="t1" x="591.6666666666666" y="384" font-size="12.5" text-anchor="middle">p99</text>
+<path class="s1" d="M528.6666666666666,364V175.8881Q528.6666666666666,171.8881 532.6666666666666,171.8881H586.6666666666666Q590.6666666666666,171.8881 590.6666666666666,175.8881V364Z" style="stroke:none"><title>WebSocket, p99: 13.821 ms (runs 8.42–18.3)</title></path>
+<path class="whisker" d="M559.6666666666666,246.962V110.0053M554.6666666666666,246.962H564.6666666666666M554.6666666666666,110.0053H564.6666666666666" stroke-width="1.5" fill="none"/>
+<text class="t1" x="559.6666666666666" y="104.0053" font-size="11.5" text-anchor="middle">13.821 ms</text>
+<path class="s2" d="M592.6666666666666,364V123.47120000000001Q592.6666666666666,119.47120000000001 596.6666666666666,119.47120000000001H650.6666666666666Q654.6666666666666,119.47120000000001 654.6666666666666,123.47120000000001V364Z" style="stroke:none"><title>MQTT over WebSocket, p99: 17.592 ms (runs 13.4–19.6)</title></path>
+<path class="whisker" d="M623.6666666666666,177.1145V92.19940000000003M618.6666666666666,177.1145H628.6666666666666M618.6666666666666,92.19940000000003H628.6666666666666" stroke-width="1.5" fill="none"/>
+<text class="t1" x="623.6666666666666" y="86.19940000000003" font-size="11.5" text-anchor="middle">17.592 ms</text>
+<text class="t2" x="383" y="406" font-size="12.5" text-anchor="middle">percentile</text>
+<text class="t2" transform="translate(18 225) rotate(-90)" font-size="12.5" text-anchor="middle">round-trip time (ms)</text>
+</svg>

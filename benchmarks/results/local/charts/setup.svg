@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 420" role="img" aria-label="Connection setup: time until each phase is done (median)">
+<title>Connection setup: time until each phase is done (median)</title>
+<style>
+  .bg { fill: #fcfcfb } .t1 { fill: #0b0b0b } .t2 { fill: #52514e } .grid { stroke: #e4e3df } .axis { stroke: #8a8984 }
+  .s1 { stroke: #2a78d6; fill: #2a78d6 } .s2 { stroke: #eb6834; fill: #eb6834 } .s3 { stroke: #8a8984; fill: #8a8984 }
+  .whisker { stroke: #0b0b0b } .gap { stroke: #fcfcfb }
+  @media (prefers-color-scheme: dark) {
+    .bg { fill: #1a1a19 } .t1 { fill: #ffffff } .t2 { fill: #c3c2b7 } .grid { stroke: #34332f } .axis { stroke: #77766f }
+    .s1 { stroke: #3987e5; fill: #3987e5 } .s2 { stroke: #d95926; fill: #d95926 } .s3 { stroke: #9a9992; fill: #9a9992 }
+    .whisker { stroke: #ffffff } .gap { stroke: #1a1a19 }
+  }
+  text { font-family: system-ui, -apple-system, "Segoe UI", sans-serif }</style>
+<rect class="bg" width="720" height="420"/>
+<text class="t1" x="70" y="26" font-size="17" font-weight="600">Connection setup: time until each phase is done (median)</text>
+<text class="t2" x="70" y="46" font-size="12.5">5 runs × 20 connections; whisker = p50–p95. WebSocket has no SUBSCRIBE phase</text>
+<rect class="s1" x="74" y="58" width="12" height="12" rx="2"/><text class="t1" x="98" y="68" font-size="12.5">WebSocket</text>
+<rect class="s2" x="187" y="58" width="12" height="12" rx="2"/><text class="t1" x="211" y="68" font-size="12.5">MQTT over WebSocket</text>
+<line class="grid" x1="70" x2="696" y1="364" y2="364"/>
+<text class="t2" x="62" y="368" font-size="11.5" text-anchor="end">0</text>
+<line class="grid" x1="70" x2="696" y1="271.33333333333337" y2="271.33333333333337"/>
+<text class="t2" x="62" y="275.33333333333337" font-size="11.5" text-anchor="end">5</text>
+<line class="grid" x1="70" x2="696" y1="178.66666666666669" y2="178.66666666666669"/>
+<text class="t2" x="62" y="182.66666666666669" font-size="11.5" text-anchor="end">10</text>
+<line class="grid" x1="70" x2="696" y1="86" y2="86"/>
+<text class="t2" x="62" y="90" font-size="11.5" text-anchor="end">15</text>
+<line class="axis" x1="70" x2="696" y1="364" y2="364"/>
+<text class="t1" x="148.25" y="384" font-size="12.5" text-anchor="middle">connected</text>
+<path class="s1" d="M94.475,364V331.6932Q94.475,327.6932 98.475,327.6932H143.25Q147.25,327.6932 147.25,331.6932V364Z" style="stroke:none"><title>WebSocket, connected: 1.959 ms (runs 1.96–2.62)</title></path>
+<path class="whisker" d="M120.8625,327.6932V315.4056M115.8625,327.6932H125.8625M115.8625,315.4056H125.8625" stroke-width="1.5" fill="none"/>
+<text class="t1" x="120.8625" y="309.4056" font-size="11.5" text-anchor="middle">1.959 ms</text>
+<path class="s2" d="M149.25,364V309.0269333333333Q149.25,305.0269333333333 153.25,305.0269333333333H198.025Q202.025,305.0269333333333 202.025,309.0269333333333V364Z" style="stroke:none"><title>MQTT over WebSocket, connected: 3.182 ms (runs 3.18–4.74)</title></path>
+<path class="whisker" d="M175.6375,305.0269333333333V276.13346666666666M170.6375,305.0269333333333H180.6375M170.6375,276.13346666666666H180.6375" stroke-width="1.5" fill="none"/>
+<text class="t1" x="175.6375" y="270.13346666666666" font-size="11.5" text-anchor="middle">3.182 ms</text>
+<text class="t1" x="304.75" y="384" font-size="12.5" text-anchor="middle">subscribed</text>
+<path class="s2" d="M305.75,364V290.9198666666667Q305.75,286.9198666666667 309.75,286.9198666666667H354.525Q358.525,286.9198666666667 358.525,290.9198666666667V364Z" style="stroke:none"><title>MQTT over WebSocket, subscribed: 4.159 ms (runs 4.16–6.33)</title></path>
+<path class="whisker" d="M332.1375,286.9198666666667V246.77666666666664M327.1375,286.9198666666667H337.1375M327.1375,246.77666666666664H337.1375" stroke-width="1.5" fill="none"/>
+<text class="t1" x="332.1375" y="240.77666666666664" font-size="11.5" text-anchor="middle">4.159 ms</text>
+<text class="t1" x="461.25" y="384" font-size="12.5" text-anchor="middle">WELCOME</text>
+<path class="s1" d="M407.475,364V280.93039999999996Q407.475,276.93039999999996 411.475,276.93039999999996H456.25Q460.25,276.93039999999996 460.25,280.93039999999996V364Z" style="stroke:none"><title>WebSocket, WELCOME: 4.698 ms (runs 4.7–6.16)</title></path>
+<path class="whisker" d="M433.8625,276.93039999999996V249.81613333333334M428.8625,276.93039999999996H438.8625M428.8625,249.81613333333334H438.8625" stroke-width="1.5" fill="none"/>
+<text class="t1" x="433.8625" y="243.81613333333334" font-size="11.5" text-anchor="middle">4.698 ms</text>
+<path class="s2" d="M462.25,364V224.81146666666666Q462.25,220.81146666666666 466.25,220.81146666666666H511.025Q515.025,220.81146666666666 515.025,224.81146666666666V364Z" style="stroke:none"><title>MQTT over WebSocket, WELCOME: 7.726 ms (runs 7.73–11.2)</title></path>
+<path class="whisker" d="M488.6375,220.81146666666666V156.00039999999998M483.6375,220.81146666666666H493.6375M483.6375,156.00039999999998H493.6375" stroke-width="1.5" fill="none"/>
+<text class="t1" x="488.6375" y="150.00039999999998" font-size="11.5" text-anchor="middle">7.726 ms</text>
+<text class="t1" x="617.75" y="384" font-size="12.5" text-anchor="middle">SYNCED</text>
+<path class="s1" d="M563.975,364V275.8708Q563.975,271.8708 567.975,271.8708H612.75Q616.75,271.8708 616.75,275.8708V364Z" style="stroke:none"><title>WebSocket, SYNCED: 4.971 ms (runs 4.97–6.46)</title></path>
+<path class="whisker" d="M590.3625000000001,271.8708V244.31173333333334M585.3625000000001,271.8708H595.3625000000001M585.3625000000001,244.31173333333334H595.3625000000001" stroke-width="1.5" fill="none"/>
+<text class="t1" x="590.3625000000001" y="238.31173333333334" font-size="11.5" text-anchor="middle">4.971 ms</text>
+<path class="s2" d="M618.75,364V220.67853333333332Q618.75,216.67853333333332 622.75,216.67853333333332H667.525Q671.525,216.67853333333332 671.525,220.67853333333332V364Z" style="stroke:none"><title>MQTT over WebSocket, SYNCED: 7.949 ms (runs 7.95–11.6)</title></path>
+<path class="whisker" d="M645.1375,216.67853333333332V149.88439999999997M640.1375,216.67853333333332H650.1375M640.1375,149.88439999999997H650.1375" stroke-width="1.5" fill="none"/>
+<text class="t1" x="645.1375" y="143.88439999999997" font-size="11.5" text-anchor="middle">7.949 ms</text>
+<text class="t2" x="383" y="406" font-size="12.5" text-anchor="middle">phase (cumulative from the start of connect)</text>
+<text class="t2" transform="translate(18 225) rotate(-90)" font-size="12.5" text-anchor="middle">ms since connect started</text>
+</svg>

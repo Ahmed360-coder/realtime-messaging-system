@@ -1,0 +1,42 @@
+{
+  "experiment": "throughput",
+  "environment": {
+    "date": "2026-10-09T14:19:04.359Z",
+    "node": "v24.19.0",
+    "os": "Windows_NT 10.0.26300 (x64)",
+    "cpu": "12th Gen Intel(R) Core(TM) i5-12500H",
+    "cores": 16,
+    "memoryGB": 16,
+    "server": "child process on http://127.0.0.1:3109, temp DB C:\\Users\\solid\\AppData\\Local\\Temp\\chat-bench.db",
+    "path": "loopback (127.0.0.1): client and server on the same laptop"
+  },
+  "config": {
+    "runs": 5,
+    "warmup": 200,
+    "count": 2000,
+    "window": 50,
+    "textChars": 65
+  },
+  "summary": {
+    "ws": {
+      "n": 5,
+      "mean": 431.46,
+      "sd": 42.051,
+      "min": 356.7,
+      "p50": 447.3,
+      "p95": 458.2,
+      "p99": 458.2,
+      "max": 458.2
+    },
+    "mqtt": {
+      "n": 5,
+      "mean": 380.66,
+      "sd": 37.797,
+      "min": 339.1,
+      "p50": 377,
+      "p95": 430.6,
+      "p99": 430.6,
+      "max": 430.6
+    }
+  }
+}

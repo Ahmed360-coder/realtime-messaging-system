@@ -1,0 +1,43 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 720 420" role="img" aria-label="Fan-out cost: server bytes sent per group message">
+<title>Fan-out cost: server bytes sent per group message</title>
+<style>
+  .bg { fill: #fcfcfb } .t1 { fill: #0b0b0b } .t2 { fill: #52514e } .grid { stroke: #e4e3df } .axis { stroke: #8a8984 }
+  .s1 { stroke: #2a78d6; fill: #2a78d6 } .s2 { stroke: #eb6834; fill: #eb6834 } .s3 { stroke: #8a8984; fill: #8a8984 }
+  .whisker { stroke: #0b0b0b } .gap { stroke: #fcfcfb }
+  @media (prefers-color-scheme: dark) {
+    .bg { fill: #1a1a19 } .t1 { fill: #ffffff } .t2 { fill: #c3c2b7 } .grid { stroke: #34332f } .axis { stroke: #77766f }
+    .s1 { stroke: #3987e5; fill: #3987e5 } .s2 { stroke: #d95926; fill: #d95926 } .s3 { stroke: #9a9992; fill: #9a9992 }
+    .whisker { stroke: #ffffff } .gap { stroke: #1a1a19 }
+  }
+  text { font-family: system-ui, -apple-system, "Segoe UI", sans-serif }</style>
+<rect class="bg" width="720" height="420"/>
+<text class="t1" x="70" y="26" font-size="17" font-weight="600">Fan-out cost: server bytes sent per group message</text>
+<text class="t2" x="70" y="46" font-size="12.5">N − 1 copies + the ACK; solid = plain text, dashed = end-to-end encrypted (Step 8); exact values in the README table</text>
+<line class="s1" x1="70" y1="64" x2="92" y2="64" stroke-width="2.5" /><text class="t1" x="98" y="68" font-size="12.5">WebSocket</text>
+<line class="s1" x1="183" y1="64" x2="205" y2="64" stroke-width="2.5" stroke-dasharray="6 4"/><text class="t1" x="211" y="68" font-size="12.5">WebSocket + E2E</text>
+<line class="s2" x1="338" y1="64" x2="360" y2="64" stroke-width="2.5" /><text class="t1" x="366" y="68" font-size="12.5">MQTT</text>
+<line class="s2" x1="416" y1="64" x2="438" y2="64" stroke-width="2.5" stroke-dasharray="6 4"/><text class="t1" x="444" y="68" font-size="12.5">MQTT + E2E</text>
+<line class="grid" x1="70" x2="696" y1="364" y2="364"/>
+<text class="t2" x="62" y="368" font-size="11.5" text-anchor="end">0</text>
+<line class="grid" x1="70" x2="696" y1="294.5" y2="294.5"/>
+<text class="t2" x="62" y="298.5" font-size="11.5" text-anchor="end">100k</text>
+<line class="grid" x1="70" x2="696" y1="225" y2="225"/>
+<text class="t2" x="62" y="229" font-size="11.5" text-anchor="end">200k</text>
+<line class="grid" x1="70" x2="696" y1="155.5" y2="155.5"/>
+<text class="t2" x="62" y="159.5" font-size="11.5" text-anchor="end">300k</text>
+<line class="grid" x1="70" x2="696" y1="86" y2="86"/>
+<text class="t2" x="62" y="90" font-size="11.5" text-anchor="end">400k</text>
+<line class="axis" x1="70" x2="696" y1="364" y2="364"/>
+<text class="t2" x="70" y="382" font-size="11.5" text-anchor="middle">0</text>
+<text class="t2" x="195.2" y="382" font-size="11.5" text-anchor="middle">10</text>
+<text class="t2" x="320.4" y="382" font-size="11.5" text-anchor="middle">20</text>
+<text class="t2" x="445.59999999999997" y="382" font-size="11.5" text-anchor="middle">30</text>
+<text class="t2" x="570.8" y="382" font-size="11.5" text-anchor="middle">40</text>
+<text class="t2" x="696" y="382" font-size="11.5" text-anchor="middle">50</text>
+<path class="s1" d="M95.0,363.7L132.6,363.3L195.2,362.6L320.4,361.1L696.0,356.8" stroke-width="2" stroke-linejoin="round"  style="fill:none"><title>WebSocket</title></path><circle class="bg" cx="95.0" cy="363.7" r="6.5"/><circle class="s1" cx="95.0" cy="363.7" r="4.5" style="stroke:none"><title>WebSocket: 407 at 2</title></circle><circle class="bg" cx="132.6" cy="363.3" r="6.5"/><circle class="s1" cx="132.6" cy="363.3" r="4.5" style="stroke:none"><title>WebSocket: 1019 at 5</title></circle><circle class="bg" cx="195.2" cy="362.6" r="6.5"/><circle class="s1" cx="195.2" cy="362.6" r="4.5" style="stroke:none"><title>WebSocket: 2057 at 10</title></circle><circle class="bg" cx="320.4" cy="361.1" r="6.5"/><circle class="s1" cx="320.4" cy="361.1" r="4.5" style="stroke:none"><title>WebSocket: 4119 at 20</title></circle><circle class="bg" cx="696.0" cy="356.8" r="6.5"/><circle class="s1" cx="696.0" cy="356.8" r="4.5" style="stroke:none"><title>WebSocket: 10299 at 50</title></circle>
+<path class="s1" d="M95.0,363.4L132.6,360.9L195.2,353.5L320.4,325.8L696.0,141.0" stroke-width="2" stroke-linejoin="round" stroke-dasharray="6 4" style="fill:none"><title>WebSocket + E2E</title></path><circle class="bg" cx="95.0" cy="363.4" r="6.5"/><circle class="s1" cx="95.0" cy="363.4" r="4.5" style="stroke:none"><title>WebSocket + E2E: 890 at 2</title></circle><circle class="bg" cx="132.6" cy="360.9" r="6.5"/><circle class="s1" cx="132.6" cy="360.9" r="4.5" style="stroke:none"><title>WebSocket + E2E: 4391 at 5</title></circle><circle class="bg" cx="195.2" cy="353.5" r="6.5"/><circle class="s1" cx="195.2" cy="353.5" r="4.5" style="stroke:none"><title>WebSocket + E2E: 15170 at 10</title></circle><circle class="bg" cx="320.4" cy="325.8" r="6.5"/><circle class="s1" cx="320.4" cy="325.8" r="4.5" style="stroke:none"><title>WebSocket + E2E: 54982 at 20</title></circle><circle class="bg" cx="696.0" cy="141.0" r="6.5"/><circle class="s1" cx="696.0" cy="141.0" r="4.5" style="stroke:none"><title>WebSocket + E2E: 320813 at 50</title></circle>
+<path class="s2" d="M95.0,363.6L132.6,363.1L195.2,362.1L320.4,360.2L696.0,354.6" stroke-width="2" stroke-linejoin="round"  style="fill:none"><title>MQTT</title></path><circle class="bg" cx="95.0" cy="363.6" r="6.5"/><circle class="s2" cx="95.0" cy="363.6" r="4.5" style="stroke:none"><title>MQTT: 543 at 2</title></circle><circle class="bg" cx="132.6" cy="363.1" r="6.5"/><circle class="s2" cx="132.6" cy="363.1" r="4.5" style="stroke:none"><title>MQTT: 1350 at 5</title></circle><circle class="bg" cx="195.2" cy="362.1" r="6.5"/><circle class="s2" cx="195.2" cy="362.1" r="4.5" style="stroke:none"><title>MQTT: 2713 at 10</title></circle><circle class="bg" cx="320.4" cy="360.2" r="6.5"/><circle class="s2" cx="320.4" cy="360.2" r="4.5" style="stroke:none"><title>MQTT: 5425 at 20</title></circle><circle class="bg" cx="696.0" cy="354.6" r="6.5"/><circle class="s2" cx="696.0" cy="354.6" r="4.5" style="stroke:none"><title>MQTT: 13555 at 50</title></circle>
+<path class="s2" d="M95.0,363.3L132.6,360.7L195.2,352.9L320.4,324.3L696.0,135.2" stroke-width="2" stroke-linejoin="round" stroke-dasharray="6 4" style="fill:none"><title>MQTT + E2E</title></path><circle class="bg" cx="95.0" cy="363.3" r="6.5"/><circle class="s2" cx="95.0" cy="363.3" r="4.5" style="stroke:none"><title>MQTT + E2E: 1034 at 2</title></circle><circle class="bg" cx="132.6" cy="360.7" r="6.5"/><circle class="s2" cx="132.6" cy="360.7" r="4.5" style="stroke:none"><title>MQTT + E2E: 4778 at 5</title></circle><circle class="bg" cx="195.2" cy="352.9" r="6.5"/><circle class="s2" cx="195.2" cy="352.9" r="4.5" style="stroke:none"><title>MQTT + E2E: 16042 at 10</title></circle><circle class="bg" cx="320.4" cy="324.3" r="6.5"/><circle class="s2" cx="320.4" cy="324.3" r="4.5" style="stroke:none"><title>MQTT + E2E: 57124 at 20</title></circle><circle class="bg" cx="696.0" cy="135.2" r="6.5"/><circle class="s2" cx="696.0" cy="135.2" r="4.5" style="stroke:none"><title>MQTT + E2E: 329164 at 50</title></circle>
+<text class="t2" x="383" y="406" font-size="12.5" text-anchor="middle">group size (members, all online)</text>
+<text class="t2" transform="translate(18 225) rotate(-90)" font-size="12.5" text-anchor="middle">bytes out per message</text>
+</svg>
