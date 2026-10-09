@@ -9,6 +9,10 @@
 // Step 7 adds groups: '#name' chats in the list, a new-group / add-people form, a Leave button,
 // sender names on received group bubbles and membership changes as system lines.
 //
+// Step 8 adds end-to-end encryption (client/e2e.js): a key pair per username in localStorage,
+// a lock bar in each chat with the safety number, a warning when a contact's key changes, and
+// a mark on messages that were not encrypted or could not be decrypted.
+//
 // Rule for this file: every event only CHANGES STATE and calls render(); render() draws the
 // screen from the state. And user text only ever reaches the page through textContent,
 // never innerHTML, so a message like <img onerror=...> is shown as text, not run (XSS).
@@ -47,6 +51,28 @@
     return t;
   }
 
+  // Step 8: the key pair of `name` on this device, made at its first join and kept next to the
+  // device token. The secret key never leaves this browser. Also the keys we pinned for others.
+  function keyRingFor(name) {
+    let identity = store.get(local, `chat.keys.${name}`, null);
+    if (!E2E.isIdentity(identity)) {
+      identity = E2E.newIdentity();
+      store.set(local, `chat.keys.${name}`, identity);
+    }
+    return new E2E.KeyRing({
+      me: name,
+      identity,
+      pins: store.get(local, `chat.pins.${name}`, {}),
+      onPin: pins => store.set(local, `chat.pins.${name}`, pins),
+    });
+  }
+
+  // Join as `name`, with that name's keys (a tab can only be one user at a time).
+  function joinAs(name) {
+    if (!client.e2e || client.e2e.me !== name) client.e2e = keyRingFor(name);
+    client.join(name);
+  }
+
   // Outbox per user in localStorage, so closing the tab while offline cannot lose messages.
   function loadOutbox(name) {
     const saved = store.get(local, `chat.outbox.${name}`, []);
@@ -74,6 +100,8 @@
     // Step 7: the new-group / add-people form, when it is open:
     //   { mode: 'create' | 'add', group, picked: Set of usernames, error, pending: id of our GROUP request }
     form: null,
+    safetyOpen: false,   // Step 8: the safety-number panel of the open chat is shown
+    sendError: '',       // Step 8: why the last message could not be encrypted (and was not sent)
     note: '',            // short-lived good news in the banner ("synced 3 messages")
     debug: store.get(local, 'chat.debug', false),
   };
@@ -100,7 +128,8 @@
 
   function startClient(protocol) {
     if (client) client.close();
-    const c = new ChatClient({ token: deviceToken(), openSocket: PROTOCOLS[protocol].open });
+    // e2e: the key ring of the user we are (still) joining as; joinAs() sets it.
+    const c = new ChatClient({ token: deviceToken(), openSocket: PROTOCOLS[protocol].open, e2e: client ? client.e2e : null });
     // Events from a client we already replaced (the user switched protocol) are ignored.
     for (const [event, fn] of handlers) c.on(event, (...args) => { if (c === client) fn(...args); });
     client = c;
@@ -147,7 +176,8 @@
     // re-sends them after SYNCED. Done before the replay, so their ids count as already seen.
     const saved = loadOutbox(state.me).filter(m => !client.pending.has(m.id));
     client.restore(saved);
-    for (const m of saved) if (m.type === ChatProto.TYPES.MSG) state.conv.addSent(m);
+    // They were saved sealed; we can open our own messages (Step 8) to show them.
+    for (const m of saved) if (m.type === ChatProto.TYPES.MSG) state.conv.addSent(client.e2e.reveal({ ...m, from: state.me }));
     // A group chat is checked after SYNCED instead: our groups are only known once the replay is in.
     if (state.open && !isGroup(state.open) && !state.known.includes(state.open)) state.open = null;
     render({ scroll: true });
@@ -212,6 +242,17 @@
 
   on('retry', (msg, n) => logNote(`no ACK for ${msg.id.slice(0, 8)} yet, sending again (try ${n})`));
 
+  // Step 8: the group changed while our message was on its way; ChatClient sealed it again.
+  on('resealed', msg => logNote(`${msg.to} members changed: ${msg.id.slice(0, 8)} re-encrypted for ${Object.keys(msg.body.keys).length} members`));
+
+  // Step 8: the server presents a different public key than the one we pinned for `user`.
+  // Either they really have a new device, or someone (the server?) is in the middle.
+  on('keychange', user => {
+    logNote(`public key of ${user} CHANGED – not used until accepted`);
+    showNote(`⚠ ${user}'s security key changed. Open the chat to compare the safety number.`);
+    render();
+  });
+
   on('ack', body => {
     if (state.conv) state.conv.ack(body);
     render();
@@ -269,10 +310,10 @@
     state.joinError = '';
     if (clientProtocol !== state.protocol) {
       startClient(state.protocol);
-      client.join(name);  // sent as soon as the connection is open
+      joinAs(name);  // sent as soon as the connection is open
       client.connect();
     } else {
-      client.join(name);  // same connection (e.g. after NAME_TAKEN): sent now
+      joinAs(name);  // same connection (e.g. after NAME_TAKEN): sent now
     }
     render();
   });
@@ -292,6 +333,8 @@
 
   function openChat(name) {
     state.open = name;
+    state.safetyOpen = false;
+    state.sendError = '';
     // A history entry per opened chat: the phone's back button/gesture returns to the list.
     history.pushState({ chat: name }, '');
     markRead(name);
@@ -304,7 +347,9 @@
   });
 
   window.addEventListener('popstate', () => {
-    state.open = history.state && history.state.chat || null;
+    const open = history.state && history.state.chat || null;
+    if (open !== state.open) { state.safetyOpen = false; state.sendError = ''; }
+    state.open = open;
     if (!(history.state && history.state.form)) state.form = null; // back out of the group form
     if (state.open) markRead(state.open);
     render({ scroll: true });
@@ -367,10 +412,37 @@
     const input = $('text');
     const body = input.value;
     if (!state.open || !body.trim()) return;
-    lastSent = client.send(state.open, body); // ChatClient retries until ACKed
-    state.conv.addSent(lastSent);             // shows at once with the 🕓 tick
+    try {
+      lastSent = client.send(state.open, body); // sealed (Step 8), then retried until ACKed
+    } catch (err) {
+      if (!(err instanceof E2E.E2EError)) throw err;
+      // Not encrypted = not sent. The text stays in the input.
+      state.sendError = err.message;
+      return render();
+    }
+    state.sendError = '';
+    // Shows at once with the 🕓 tick; the bubble shows our text, the frame carries ciphertext.
+    state.conv.addSent({ ...lastSent, body, security: 'e2e' });
     input.value = '';
     render({ scroll: true });
+  });
+
+  // ---- Step 8: end-to-end encryption ----
+
+  $('secureBar').addEventListener('click', () => {
+    state.safetyOpen = !state.safetyOpen;
+    render();
+  });
+
+  // The user compared the NEW safety number with the contact (in person) and accepts the new key.
+  $('trustBtn').addEventListener('click', () => {
+    const user = state.open;
+    if (!client.e2e.trust(user)) return;
+    // Messages that came with the new key and did not open can be read now.
+    const opened = state.conv.reopenFailed(m => client.e2e.reveal(m));
+    showNote(`New key of ${user} accepted${opened ? ` · ${opened} message${opened === 1 ? '' : 's'} decrypted` : ''}`);
+    state.sendError = '';
+    render();
   });
 
   // Coming back to the tab: messages that arrived while it was hidden are read now.
@@ -498,7 +570,7 @@
     const bottom = el('span', 'contact-bottom');
     let preview;
     if (last && last.event) preview = eventText(last);
-    else if (last) preview = (last.mine ? 'You: ' : group ? `${last.from}: ` : '') + last.body;
+    else if (last) preview = (last.mine ? 'You: ' : group ? `${last.from}: ` : '') + (last.security === 'failed' ? '🔒 encrypted message' : last.body);
     else if (group) preview = `${members.length} members`;
     else preview = online ? 'online · say hi' : 'offline · messages wait on the server';
     bottom.append(el('span', 'preview', preview));
@@ -528,6 +600,9 @@
     }
     $('addMembersBtn').hidden = !members;
     $('leaveBtn').hidden = !members;
+    renderSecurity(name, members);
+    $('sendError').hidden = !state.sendError;
+    $('sendError').textContent = state.sendError;
 
     const list = $('messageList');
     // Auto-scroll only if the user was already at (or near) the bottom: if they scrolled
@@ -537,6 +612,55 @@
     if (!items.length) items.push(el('li', 'empty', 'No messages yet. Say hi!'));
     list.replaceChildren(...items);
     if (forceScroll || nearBottom) list.scrollTop = list.scrollHeight;
+  }
+
+  // Step 8: the lock bar under the chat header and, when tapped, the safety-number panel.
+  function renderSecurity(name, members) {
+    const ring = client.e2e;
+    const bar = $('secureBar');
+    let text, warn = false, intro, number = '', trust = false;
+    if (isGroup(name)) {
+      // In a group nobody can be "changed" without a warning in their 1-to-1 chat: we list them here too.
+      const list = members || [];
+      const changed = list.filter(u => ring.status(u) === 'changed');
+      const missing = list.filter(u => ring.status(u) === 'unknown');
+      warn = changed.length > 0;
+      text = warn ? `⚠ Key changed: ${changed.join(', ')} · tap for details`
+        : `🔒 End-to-end encrypted for ${list.length} members`;
+      intro = 'Every message gets a new random key, which is encrypted separately for each member ' +
+        '(you included). The server only stores and forwards ciphertext. Verify each member by ' +
+        'comparing safety numbers in your 1-to-1 chat with them.' +
+        (warn ? ` Sending is blocked until you accept the new key of ${changed.join(', ')} in their chat.` : '') +
+        (missing.length ? ` No key yet for: ${missing.join(', ')}.` : '');
+    } else {
+      const status = ring.status(name);
+      warn = status === 'changed';
+      text = warn ? `⚠ ${name}'s security key changed · tap to verify`
+        : status === 'pinned' ? '🔒 End-to-end encrypted · tap for safety number'
+        : `🔓 No key for ${name} yet · cannot send`;
+      if (warn) {
+        intro = `The server now gives a different key for ${name} than before. Either ${name} ` +
+          'has a new device, or someone (even the server) is trying to read your messages. ' +
+          `Compare this NEW safety number with ${name}'s phone before you accept it. Until then, sending is blocked.`;
+        number = ring.safetyNumber(name, true);
+        trust = true;
+      } else if (status === 'pinned') {
+        intro = `Messages to ${name} are encrypted on this phone and can only be opened on ${name}'s. ` +
+          `Compare these 30 digits with ${name}'s screen: if they match, nobody (not even the server) ` +
+          'swapped a key in between.';
+        number = ring.safetyNumber(name);
+      } else {
+        intro = `${name} has not opened the app since encryption was added, so there is no public key to encrypt to.`;
+      }
+    }
+    bar.textContent = text;
+    bar.classList.toggle('warn', warn);
+    bar.setAttribute('aria-expanded', String(state.safetyOpen));
+    $('safetyPanel').hidden = !state.safetyOpen;
+    $('safetyText').textContent = intro;
+    $('safetyNumber').textContent = number;
+    $('safetyNumber').hidden = !number;
+    $('trustBtn').hidden = !trust;
   }
 
   // Delivery tick for our own messages: text for the eye, a full sentence for screen readers.
@@ -552,8 +676,12 @@
     const li = el('li', `bubble${m.mine ? ' mine' : ''}${m.status === 'failed' ? ' failed' : ''}`);
     // In a group, say who wrote it (textContent, like the message itself).
     if (!m.mine && isGroup(m.to)) li.append(el('span', 'sender', m.from));
-    li.append(document.createTextNode(m.body)); // textContent-style: never parsed as HTML
+    // Step 8: a message that did not decrypt (wrong key, modified, not for us) shows no text.
+    if (m.security === 'failed') li.append(el('span', 'undecryptable', '🔒 Could not decrypt this message'));
+    else li.append(document.createTextNode(m.body)); // textContent-style: never parsed as HTML
     const meta = el('span', 'meta');
+    // Plain text has no proof of who wrote it: anyone, the server included, could have.
+    if (m.security === 'plain' && !m.mine) meta.append(el('span', 'plain-mark', '⚠ not encrypted'));
     meta.append(el('time', '', timeLabel(m.ts)));
     if (m.mine) {
       const [symbol, label] = TICKS[m.status] || TICKS.waiting;
@@ -672,7 +800,7 @@
     state.joining = savedName;
     $('username').value = savedName;
     startClient(state.protocol);
-    client.join(savedName);
+    joinAs(savedName);
     client.connect();
   }
   render();

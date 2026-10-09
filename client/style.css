@@ -234,6 +234,32 @@ button { cursor: pointer; }
   font-size: 0.8rem; text-align: center; overflow-wrap: anywhere;
 }
 
+/* ---- End-to-end encryption (Step 8) ---- */
+.secure-bar { /* "🔒 End-to-end encrypted · tap for safety number", the whole row is the tap target */
+  display: block; width: 100%; min-height: 36px; padding: 6px var(--gutter);
+  border: none; border-bottom: 1px solid var(--surface-2);
+  background: var(--surface); color: var(--ok);
+  font-size: 0.8rem; text-align: center; overflow-wrap: anywhere;
+}
+.secure-bar.warn { background: var(--danger); color: #ffffff; font-weight: 600; }
+.safety {
+  padding: 8px var(--gutter) 12px;
+  border-bottom: 1px solid var(--surface-2);
+  background: var(--surface); font-size: 0.85rem;
+}
+.safety p { margin: 0 0 8px; }
+.safety-number { /* 6 groups of 5 digits, easy to read out loud */
+  font-family: ui-monospace, monospace; font-size: 1.15rem; letter-spacing: 0.05em;
+  text-align: center; word-spacing: 0.4em;
+}
+.undecryptable { font-style: italic; opacity: 0.8; }
+.plain-mark { color: var(--warn); font-weight: 600; }
+.bubble.mine .plain-mark { color: inherit; }
+.send-error {
+  margin: 0; padding: 6px var(--gutter);
+  background: var(--surface); color: var(--danger); font-size: 0.85rem;
+}
+
 /* ---- New group / add people (Step 7) ---- */
 .group-form {
   flex: 1; min-height: 0; overflow-y: auto;

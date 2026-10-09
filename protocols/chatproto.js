@@ -12,6 +12,12 @@
 //
 // Addresses (Step 7): `to` is either a username ("bob", 1-to-1) or a group ("#study").
 // A username can never contain '#', so the address alone says which kind it is.
+//
+// End-to-end encryption (Step 8): a MSG body is either plain text (a string) or a SEALED body,
+// an object the server cannot read (made and opened by client/e2e.js, never by the server):
+//   1-to-1: { nonce, box }          box = nacl.box of the message, to the other user
+//   group:  { nonce, box, keys }    box = nacl.secretbox under a fresh key K; keys = { member: K boxed to them }
+// Public keys travel in HELLO.body.key, WELCOME/USERS.body.keys and PRESENCE.body.key.
 
 (function (root, factory) {
   // Works in Node (CommonJS) and in the browser (global ChatProto).
@@ -25,18 +31,18 @@
   // Message types and who is allowed to send them.
   const TYPES = {
     // client -> server
-    HELLO: 'HELLO',       // join the chat:          body = { username, token, lastSeq }
-    MSG: 'MSG',           // chat message:           to = user or #group, body = text (server adds from)
+    HELLO: 'HELLO',       // join the chat:          body = { username, token, lastSeq, key (Step 8) }
+    MSG: 'MSG',           // chat message:           to = user or #group, body = text or sealed (server adds from)
     LIST: 'LIST',         // ask for online users
     // both directions (Step 7)
     GROUP: 'GROUP',       // membership change:      to = #group, body = { op: create|add|leave, users }
                           //   server -> members: + from (who did it), seq, body.members (after the change)
     // server -> client
-    WELCOME: 'WELCOME',   // join accepted:          body = { username, users, known }
+    WELCOME: 'WELCOME',   // join accepted:          body = { username, users, known, keys (Step 8) }
     SYNCED: 'SYNCED',     // offline replay done:    body = { count, lastSeq }
     ACK: 'ACK',           // server STORED a MSG:    body = { ref, seq, status: 'delivered'|'stored'|'duplicate' }
-    PRESENCE: 'PRESENCE', // someone joined/left:    body = { username, status: 'online'|'offline' }
-    USERS: 'USERS',       // online + known users:   body = { users, known }
+    PRESENCE: 'PRESENCE', // someone joined/left:    body = { username, status: 'online'|'offline', key (Step 8) }
+    USERS: 'USERS',       // online + known users:   body = { users, known, keys (Step 8) }
     ERROR: 'ERROR',       // something was wrong:    body = { code, message, ref }
     BYE: 'BYE',           // server closes us (MQTT): body = { code, reason } (see CLOSE_REPLACED)
   };
@@ -66,6 +72,9 @@
     NOT_MEMBER: 'NOT_MEMBER',       // only members may send to / add to / leave a group
     GROUP_EXISTS: 'GROUP_EXISTS',   // create: the name is taken
     GROUP_FULL: 'GROUP_FULL',       // the group would have more than MAX_GROUP_MEMBERS members
+    // Step 8: end-to-end encryption
+    KEY_MISMATCH: 'KEY_MISMATCH',   // HELLO.key differs from the public key registered for that username
+    STALE_MEMBERS: 'STALE_MEMBERS', // sealed group MSG: body.keys is not exactly the current members
   };
 
   // WebSocket close code (4000-4999 = application-defined) sent to an old connection when
@@ -83,6 +92,15 @@
   const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
   const TOKEN_RE = /^[A-Za-z0-9_-]{16,128}$/; // random secret: "same device as last time"
   const isSeq = x => Number.isSafeInteger(x) && x >= 0;
+
+  // Step 8: binary values travel as base64 text. NaCl sizes are fixed: a Curve25519 public key
+  // is 32 bytes (44 chars), a nonce 24 bytes (32 chars), a group key box 80 bytes (108 chars:
+  // the 32-byte message key + a 32-byte hash of the ciphertext + the 16-byte Poly1305 tag).
+  const KEY_RE = /^[A-Za-z0-9+/]{43}=$/;
+  const NONCE_RE = /^[A-Za-z0-9+/]{32}$/;
+  const KEYBOX_RE = /^[A-Za-z0-9+/]{107}=$/;
+  const BASE64_RE = /^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/;
+  const MIN_BOX_CHARS = 24; // a box is at least the 16-byte tag + 1 byte of text = 17 bytes = 24 chars
 
   // A random (version 4) UUID. crypto.randomUUID() only exists in "secure contexts"
   // (HTTPS or localhost); phones open http://192.168.x.x, so fall back to getRandomValues.
@@ -152,11 +170,18 @@
           return 'HELLO body.token must be 16-128 letters, digits, _ or -';
         if (msg.body.lastSeq !== undefined && !isSeq(msg.body.lastSeq))
           return 'HELLO body.lastSeq must be an integer >= 0';
+        if (msg.body.key !== undefined && !isKey(msg.body.key))
+          return 'HELLO body.key must be a base64 Curve25519 public key (32 bytes)';
         return null;
       case TYPES.MSG:
         if (typeof msg.to !== 'string' || !(USERNAME_RE.test(msg.to) || isGroup(msg.to))) return 'MSG to must be a username or #group';
-        if (typeof msg.body !== 'string' || msg.body.trim() === '') return 'MSG body must be non-empty text';
-        if (msg.body.length > MAX_BODY_CHARS) return `MSG body longer than ${MAX_BODY_CHARS} characters`;
+        if (isSealed(msg.body)) {
+          const problem = checkSealed(msg.body, isGroup(msg.to));
+          if (problem) return problem;
+        } else {
+          if (typeof msg.body !== 'string' || msg.body.trim() === '') return 'MSG body must be non-empty text or a sealed object';
+          if (msg.body.length > MAX_BODY_CHARS) return `MSG body longer than ${MAX_BODY_CHARS} characters`;
+        }
         // Only the server assigns seq (a client's seq is ignored), but it must be well-formed.
         if (msg.seq !== undefined && !isSeq(msg.seq)) return 'MSG seq must be an integer >= 0';
         return null;
@@ -181,6 +206,7 @@
       case TYPES.WELCOME:
       case TYPES.USERS:
         if (!isPlainObject(msg.body) || !Array.isArray(msg.body.users)) return `${msg.type} body.users must be an array`;
+        if (msg.body.keys !== undefined && !isKeyMap(msg.body.keys, KEY_RE)) return `${msg.type} body.keys must map usernames to public keys`;
         return null;
       case TYPES.SYNCED:
         if (!isPlainObject(msg.body) || !isSeq(msg.body.count) || !isSeq(msg.body.lastSeq))
@@ -196,6 +222,7 @@
       case TYPES.PRESENCE:
         if (!isPlainObject(msg.body) || typeof msg.body.username !== 'string' ||
             !['online', 'offline'].includes(msg.body.status)) return 'PRESENCE body needs username and status online|offline';
+        if (msg.body.key !== undefined && !isKey(msg.body.key)) return 'PRESENCE body.key must be a public key';
         return null;
       case TYPES.ERROR:
         if (!isPlainObject(msg.body) || typeof msg.body.code !== 'string') return 'ERROR body.code must be a string';
@@ -208,6 +235,33 @@
     }
   }
 
+  // ---- Step 8: end-to-end encryption ----
+
+  const isKey = k => typeof k === 'string' && KEY_RE.test(k);
+
+  // A MSG body that is an object is a sealed (encrypted) body; a string is plain text.
+  const isSealed = body => isPlainObject(body);
+
+  // { username: base64 }, every value matching `re`.
+  function isKeyMap(map, re) {
+    return isPlainObject(map) && Object.entries(map).every(([u, k]) => USERNAME_RE.test(u) && typeof k === 'string' && re.test(k));
+  }
+
+  // The shape of a sealed MSG body. The server can only check the SHAPE (sizes, base64, who the
+  // key boxes are for). Whether the bytes really are ciphertext, only the recipients can tell.
+  function checkSealed(b, group) {
+    const fields = group ? ['nonce', 'box', 'keys'] : ['nonce', 'box'];
+    const extra = Object.keys(b).find(k => !fields.includes(k));
+    if (extra) return `sealed MSG body has an unexpected field ${JSON.stringify(extra)}`;
+    if (typeof b.nonce !== 'string' || !NONCE_RE.test(b.nonce)) return 'sealed MSG body.nonce must be 24 bytes of base64';
+    if (typeof b.box !== 'string' || b.box.length < MIN_BOX_CHARS || !BASE64_RE.test(b.box)) return 'sealed MSG body.box must be base64 ciphertext';
+    if (!group) return null;
+    if (!isKeyMap(b.keys, KEYBOX_RE)) return 'sealed group MSG body.keys must map each member to an 80-byte key box';
+    const n = Object.keys(b.keys).length;
+    if (n === 0 || n > MAX_GROUP_MEMBERS) return `sealed group MSG body.keys must have 1-${MAX_GROUP_MEMBERS} entries`;
+    return null;
+  }
+
   // Convenience builder for ERROR replies. `ref` is the id of the offending message, if known.
   function error(code, message, ref) {
     return make(TYPES.ERROR, { body: { code, message, ref: ref || null } });
@@ -216,6 +270,7 @@
   return {
     VERSION, TYPES, CLIENT_TYPES, SERVER_TYPES, ERRORS, CLOSE_REPLACED,
     MAX_FRAME_BYTES, MAX_BODY_CHARS, USERNAME_RE, TOKEN_RE, GROUP_RE, GROUP_OPS, MAX_GROUP_MEMBERS,
-    uuid, make, encode, decode, error, isGroup,
+    KEY_RE, NONCE_RE, KEYBOX_RE,
+    uuid, make, encode, decode, error, isGroup, isSealed,
   };
 });

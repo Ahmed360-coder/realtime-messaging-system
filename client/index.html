@@ -72,7 +72,15 @@
         <button type="button" id="leaveBtn" class="pill-btn danger" hidden>Leave</button>
         <button type="button" class="icon-btn debug-toggle" aria-label="Show debug panel" aria-pressed="false">{ }</button>
       </header>
+      <!-- Step 8: end-to-end encryption status. Tap it for the safety number. -->
+      <button type="button" id="secureBar" class="secure-bar" aria-expanded="false" aria-controls="safetyPanel"></button>
+      <div id="safetyPanel" class="safety" hidden>
+        <p id="safetyText"></p>
+        <p id="safetyNumber" class="safety-number"></p>
+        <button type="button" id="trustBtn" class="pill-btn danger" hidden>I compared it: accept the new key</button>
+      </div>
       <ol id="messageList" class="messages" aria-label="Messages"></ol>
+      <p id="sendError" class="send-error" role="alert" hidden></p>
       <form id="sendForm" class="composer">
         <label for="text" class="sr-only">Message</label>
         <input id="text" maxlength="2000" autocomplete="off" enterkeyhint="send" placeholder="Message">
@@ -134,6 +142,8 @@
   <script src="/protocols/mqtt-binding.js"></script>
   <script src="/vendor/mqtt.min.js"></script>
   <script src="/mqtt-socket.js"></script>
+  <script src="/vendor/nacl.min.js"></script>
+  <script src="/e2e.js"></script>
   <script src="/chat-client.js"></script>
   <script src="/conversations.js"></script>
   <script src="/app.js"></script>

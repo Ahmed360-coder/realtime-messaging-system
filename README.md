@@ -36,7 +36,7 @@ CSEN 503 – Computer Networks, Winter 2026 (Instructor: Amr Saber)
    (Aedes) embedded in the server. Same hub, same database: users of the two protocols chat
    with each other.
 
-### ChatProto v1 (Step 2, extended for reliability in Step 3 and for groups in Step 7)
+### ChatProto v1 (Step 2, extended for reliability in Step 3, groups in Step 7, E2E encryption in Step 8)
 One JSON object per WebSocket text frame on `ws://<laptop-ip>:3000/ws`
 (codec: `protocols/chatproto.js`, shared by server and browser).
 
@@ -52,22 +52,24 @@ assigned by the server when it stores the message (ordering and offline sync).
 
 | Type | Direction | Fields |
 |---|---|---|
-| `HELLO` | client → server | `body.username` (1–20 of `A-Z a-z 0-9 _`), `body.token` (16–128 of `A-Z a-z 0-9 _ -`), `body.lastSeq` (optional integer ≥ 0, default 0) |
-| `MSG` | both | `to` (username or `#group`), `body` (text ≤ 2000 chars); server sets `from` and adds `seq` |
+| `HELLO` | client → server | `body.username` (1–20 of `A-Z a-z 0-9 _`), `body.token` (16–128 of `A-Z a-z 0-9 _ -`), `body.lastSeq` (optional integer ≥ 0, default 0), `body.key` (Step 8, optional: base64 Curve25519 public key, 32 bytes) |
+| `MSG` | both | `to` (username or `#group`), `body`: text ≤ 2000 chars, **or (Step 8) a sealed object** `{nonce, box}` (1-to-1) / `{nonce, box, keys}` (group, `keys` = `{member: key box}` for every current member). Server sets `from` and adds `seq` |
 | `GROUP` (Step 7) | both | client → server: `to` (`#group`), `body.op` (`create` / `add` / `leave`), `body.users` (usernames; for `create`/`add`, ≤ 50). Server → members: the same plus `from` (who did it), `seq`, `body.members` (the member list after the change) |
 | `LIST` | client → server | – |
-| `WELCOME` | server → client | `body.username`, `body.users` (online), `body.known` (all registered) |
+| `WELCOME` | server → client | `body.username`, `body.users` (online), `body.known` (all registered), `body.keys` (Step 8: `{username: public key}`) |
 | `SYNCED` | server → client | `body.count` (messages replayed), `body.lastSeq` |
 | `ACK` | server → client | `body.ref` (acked id), `body.seq`, `body.status` (`delivered` / `stored` / `duplicate`); for a group also `body.recipients` (other members) and `body.delivered` (how many got it live) |
-| `PRESENCE` | server → client | `body.username`, `body.status` (`online`/`offline`) |
-| `USERS` | server → client | `body.users` (online), `body.known` (all registered) |
+| `PRESENCE` | server → client | `body.username`, `body.status` (`online`/`offline`), `body.key` (Step 8, with `online`) |
+| `USERS` | server → client | `body.users` (online), `body.known` (all registered), `body.keys` (Step 8) |
 | `ERROR` | server → client | `body.code`, `body.message`, `body.ref` |
 | `BYE` | server → client (MQTT only) | `body.code` (e.g. `4001`), `body.reason`: "I am closing you, this is why" |
 
 Error codes: `BAD_JSON`, `BAD_VERSION`, `BAD_TYPE`, `BAD_FIELD`, `TOO_LARGE`, `NOT_JOINED`,
 `ALREADY_JOINED`, `NAME_TAKEN` (name registered to another token), `UNKNOWN_USER`
-(recipient never joined), and for groups `UNKNOWN_GROUP`, `NOT_MEMBER`, `GROUP_EXISTS`,
-`GROUP_FULL` (> 50 members). Malformed frames get an `ERROR` and the connection stays open;
+(recipient never joined), for groups `UNKNOWN_GROUP`, `NOT_MEMBER`, `GROUP_EXISTS`,
+`GROUP_FULL` (> 50 members), and for encryption (Step 8) `KEY_MISMATCH` (`HELLO.key` differs from
+the key registered for that name) and `STALE_MEMBERS` (a sealed group message's `keys` are not
+exactly the current members; nothing was stored, re-seal and re-send with the same id). Malformed frames get an `ERROR` and the connection stays open;
 frames over 16 KB close the socket with code 1009. The server pings every 30 s and drops
 clients that do not answer. Close code `4001` = "replaced by a newer connection of the
 same user"; the client must not auto-reconnect after it.
@@ -83,7 +85,13 @@ the client page and codec from the same origin, so a client of another version c
 exist, and v1 had not been frozen or released. Bumping to v2 would add a compatibility
 branch with no client to use it. Step 7 is the same case and is also purely additive: one new
 type (`GROUP`), a new address form (`#name`), two optional `ACK` fields and four error codes.
-Every frame that existed before keeps its exact meaning.
+Every frame that existed before keeps its exact meaning. Step 8 is additive too:
+- optional key fields in `HELLO` / `WELCOME` / `USERS` / `PRESENCE`;
+- a second *form* of `MSG.body` (an object instead of a string);
+- two error codes.
+
+A string body still means plain text, exactly as before. Encryption is a property of the body,
+not of the protocol version: the server routes both forms the same way.
 
 Code layout: `protocols/chatproto.js` (format) and `protocols/mqtt-binding.js` (MQTT topics) →
 `server/transports/websocket.js` / `server/transports/mqtt.js` (bytes ↔ ChatProto text) →
@@ -100,6 +108,14 @@ conversations unit tests.
 Client side: `client/mqtt-socket.js` (an MQTT connection that looks like a WebSocket) →
 `client/chat-client.js` (retry, dedup, reconnect; no UI) → `client/conversations.js`
 (page state; no UI) → `client/app.js` + `index.html` + `style.css` (the phone UI).
+End-to-end encryption (Step 8) is one new client file, `client/e2e.js` (TweetNaCl seal/open, key
+ring, safety numbers), used by `chat-client.js` and served with TweetNaCl at `/vendor/nacl.min.js`.
+On the server, the changes are:
+- `store.js`: the key column, the `e2e` flag and migration 1 → 2;
+- `hub.js`: pins and hands out keys, and the `STALE_MEMBERS` check;
+- `chatproto.js`: the sealed-body format.
+
+The server has no crypto code. Tests: `tests/e2e.test.js`.
 
 ### Reliability (implemented in Step 3)
 TCP only guarantees delivery between two kernels while one connection lives; it cannot
@@ -130,12 +146,12 @@ application adds its own end-to-end checks:
   Later, the same token is required. The same token while an old "zombie" session still exists
   takes it over (`4001`), so a phone that changed networks can reconnect immediately.
 
-Database (`chat.db`, git-ignored; `DB_PATH` overrides), schema version 1 (`PRAGMA user_version`):
+Database (`chat.db`, git-ignored; `DB_PATH` overrides), schema version 2 (`PRAGMA user_version`):
 
 | Table | Columns | Notes |
 |---|---|---|
-| `users` | `username` PK, `token_hash`, `created_at`, `last_seen` | |
-| `messages` | `seq` PK AUTOINCREMENT, `id` UNIQUE, `kind` (`text` / `create` / `add` / `leave`), `sender` → users, `recipient` → users, `group_name` → groups, `body`, `ts`, `stored_at` | CHECK: exactly one of `recipient` / `group_name`; a membership change (`kind` ≠ `text`) belongs to a group and its `body` is JSON `{users, members}` |
+| `users` | `username` PK, `token_hash`, `created_at`, `last_seen`, `public_key` (Step 8) | `public_key`: base64 Curve25519 key, set once by the first `HELLO` that has one, never replaced |
+| `messages` | `seq` PK AUTOINCREMENT, `id` UNIQUE, `kind` (`text` / `create` / `add` / `leave`), `sender` → users, `recipient` → users, `group_name` → groups, `body`, `ts`, `stored_at`, `e2e` (Step 8, 0/1) | CHECK: exactly one of `recipient` / `group_name`; a membership change (`kind` ≠ `text`) belongs to a group and its `body` is JSON `{users, members}`. `e2e = 1`: `body` is the JSON of the sealed object (ciphertext) |
 | `groups` (Step 7) | `name` PK (`#study`), `created_by` → users, `created_at` | the name is unique |
 | `group_members` (Step 7) | `group_name` → groups, `username` → users, `joined_seq`; PK (`group_name`, `username`) | current members only; `joined_seq` = seq of the change that added them |
 
@@ -154,6 +170,13 @@ Indexes: `messages(recipient, seq)`, `messages(sender, seq)`, `messages(group_na
 7. set `user_version = 1`.
 
 If any step fails, the transaction rolls back and the old file is unchanged.
+
+**Migration 1 → 2 (Step 8)** only *adds* columns, which `ALTER TABLE … ADD COLUMN` does in place
+with no rebuild:
+- `users.public_key`, NULL until that user's next `HELLO` with a key;
+- `messages.e2e` with `DEFAULT 0`, so every older message counts as plain text.
+
+It runs in the same transaction, and a Step 3–6 file goes 0 → 1 → 2 in one go.
 
 ### Mobile chat UI (Step 4)
 Plain HTML/CSS/JS served from `client/` (no framework, no build step), designed for
@@ -357,7 +380,7 @@ Open `http://<laptop-ip>:3000/stats` (also linked from the join screen). It upda
 | Connections open / opened since start | gauge / counter | TCP sockets upgraded on `/ws` or `/mqtt` |
 | Users online | gauge | the hub's online map, read at snapshot time |
 | Messages per second (avg of the last 10 s) + chart of the last 60 s | rate | sliding window of 60 one-second buckets |
-| Messages sent (new) · to groups · copies delivered live · copies stored for offline · duplicates · received live · replayed by sync · group changes | counters | hub events |
+| Messages sent (new) · to groups · end-to-end encrypted (Step 8) · copies delivered live · copies stored for offline · duplicates · received live · replayed by sync · group changes | counters | hub events |
 | Errors by code (`BAD_JSON`, `UNKNOWN_USER` …, `INTERNAL`) | counters | every ChatProto `ERROR` reply |
 | Bytes in / out | counters | `socket.bytesRead` / `bytesWritten` of each TCP connection |
 | Server latency: ACK and delivery, p50 / p95 / max (ms) | summary of the last 1000 samples | `performance.now()` |
@@ -402,6 +425,153 @@ reconnects by itself (the server sends `retry: 2000`).
 The chart uses Chart.js, served by our server at `/vendor/chart.umd.min.js` so phones need no
 internet. Like the chat, the page writes text only through `textContent` (checked by the XSS test).
 
+### End-to-end encryption (Step 8)
+The server stores and forwards **ciphertext only**, for 1-to-1 and group messages, over both
+protocols. Messages are encrypted on the sender's phone and decrypted on the recipients' phones.
+The server keeps doing everything it did before (store, `seq`, ACK, fan-out, sync) without being
+able to read a message, and it contains no crypto code at all.
+
+**Library: [TweetNaCl](https://tweetnacl.js.org)** (`tweetnacl`, a JavaScript port of NaCl). It is
+small, audited, has no dependencies, and is the same API in Node (tests) and in the browser. Our
+server serves it at `/vendor/nacl.min.js` (phones have no internet).
+
+| Primitive | What it is | Used for |
+|---|---|---|
+| Curve25519 (X25519) | public-key Diffie–Hellman: my secret key + your public key = the same 32-byte shared secret as your secret key + my public key | key agreement; the server only ever sees the public halves |
+| XSalsa20 | stream cipher: key + 24-byte nonce → keystream, XOR the text | confidentiality |
+| Poly1305 | one-time MAC, a 16-byte tag | integrity + authenticity: a changed bit or a wrong key → `open` returns null |
+| `nacl.box` | X25519 + XSalsa20-Poly1305 | 1-to-1 messages; group key boxes |
+| `nacl.secretbox` | XSalsa20-Poly1305 with a key you already have | the body of a group message |
+| `nacl.hash` (SHA-512), `randomBytes` | hash, secure random | safety numbers, ciphertext binding; keys and nonces |
+
+**Keys on the device.**
+- On a device's first join as a name, the page creates a key pair and stores it in `localStorage`
+  (`chat.keys.<name>`), next to the Step 3 device token.
+- The secret key never leaves the browser.
+- `HELLO.key` uploads the public key. The server **pins** it in `users.public_key`, like the
+  token: a later `HELLO` with a different key gets `KEY_MISMATCH`.
+- `WELCOME` / `USERS` (`keys`) and `PRESENCE online` (`key`) hand the keys out, so the server is
+  the key directory.
+
+**1-to-1:** `body = {nonce, box}`, where `box = nacl.box(inner, nonce, bobPublic, aliceSecret)`.
+- Bob opens it with `(alicePublic, bobSecret)`.
+- Alice can open it too with `(bobPublic, aliceSecret)`: it is the same shared key. So her own
+  history, replayed by sync after a reload, still decrypts.
+
+**Groups: a fresh key per message, boxed to each member.** For each group message the sender:
+1. picks a random 32-byte key K;
+2. encrypts the text **once**: `box = secretbox(inner, nonce, K)`;
+3. for **every current member, herself included**, adds
+   `keys[member] = nacl.box(K ‖ SHA-512(box)[0..32], nonce, memberPublic, senderSecret)`, 80 bytes each.
+
+Why this scheme:
+
+| Option | Frame size | Membership change | Verdict |
+|---|---|---|---|
+| (A) the whole message boxed per member | N × text | nothing to do | wastes bandwidth with long texts |
+| **(B) per-message key K, boxed per member** | text + N × 108 chars | **nothing to do** | **used** |
+| (C) long-lived group key / Signal "sender keys" | text | every leave forces all members to rotate keys | complex state, not needed for ≤ 50 members |
+
+- Every message is encrypted to the members *at that moment*. Someone who left has no key box in
+  the next message. Someone just added has none in older ones, and the Step 7 sync does not send
+  those anyway. So no re-keying protocol is needed.
+- **Cost relative to Step 7:**
+  - the fan-out is unchanged: 1 stored row, N − 1 `deliver()` calls of the *same* frame; the
+    server does not re-encrypt per member;
+  - the frame grows by about N × 120 bytes;
+  - the sender does N `box` operations, each a fraction of a millisecond.
+- The worst case (2000 three-byte characters, 50 members with 20-character names) is tested to
+  fit in the 16 KB frame limit.
+- **`STALE_MEMBERS`.** The hub checks, in the same transaction as the membership check, that
+  `keys` names exactly the current members. If someone joined or left while the message was on
+  its way, it is refused **before it is stored**.
+  - The `GROUP` event with the new list has already reached the sender: one connection is FIFO,
+    and the server sent the event before handling the message.
+  - So ChatClient opens its own message (it has a key box for itself), re-seals it for the new
+    list, and re-sends it with the **same id**. The id is still unused.
+  - The page never sees the error.
+
+**Nonces.**
+- 24 random bytes per message. With XSalsa20's 192-bit nonce, random nonces are safe, and no
+  counter has to be kept across devices.
+- The rule is "never the same nonce twice *with the same key*". In a group message the one nonce
+  is used with K and with each member's shared key, and those are all different keys.
+- A retry re-sends the identical frame (same id, same nonce, same ciphertext). That is the same
+  message, not a reuse.
+
+**Authentication and context binding.**
+- The plaintext is JSON `{from, to, id, ts, text}`. The receiver checks it against the envelope.
+  So the server cannot:
+  - move a message to another chat;
+  - swap `from` / `to` (in 1-to-1 both directions use the same shared key);
+  - replay it under a new id or a new time.
+- A successful `box.open` with alice's public key proves alice (or the recipient) made it.
+- In a group every member knows K. The hash of the ciphertext inside each key box stops a member
+  from putting a different text under the sender's name: carol's key box was made by alice and
+  names alice's exact ciphertext.
+- `box` is **deniable**, not signed. Bob is convinced, but cannot prove it to a third party
+  (that would need `nacl.sign`).
+
+**Trust: what a malicious server could do, and the defences.**
+- The server hands out the public keys. A malicious server could give alice *its own* key as
+  "bob's" (man in the middle) and read everything.
+- **TOFU pinning.** Each page pins the first key it sees for each contact (`chat.pins.<name>`).
+  If the server later presents a different key:
+  - ChatClient emits `keychange`;
+  - the chat shows a red bar;
+  - sending to that contact is blocked;
+  - incoming messages are still opened with the pinned key.
+
+  The user can accept the new key only after comparing the new safety number.
+- **Safety numbers.** 30 digits from SHA-512 over both names and public keys (sorted, so both
+  phones compute the same number). Users compare them in person. Equal numbers mean nobody,
+  including the server, swapped a key. This defeats a man in the middle even at first contact.
+- Tested: a key replaced directly in the database is detected, and the safety number differs.
+
+**What the server still sees (metadata).**
+- who talks to whom (`from`, `to`);
+- when (`ts`, `stored_at`), and the order (`seq`);
+- online times;
+- message **sizes** (ciphertext = text + 16 bytes + base64 overhead);
+- group names and memberships, which it must enforce;
+- the number of members of each group message (the `keys`).
+
+E2E hides **content** only.
+
+**What we do NOT provide.**
+- **Forward secrecy.** One long-term key pair per user. A secret key stolen later decrypts every
+  old ciphertext still stored on the server. Signal's Double Ratchet derives a new key per
+  message and deletes old ones.
+- **Post-compromise security** and **key rotation / multi-device.** One key per username,
+  forever. A new phone means a new username.
+- **Protection against a malicious server sending a malicious page.** The web app's JavaScript
+  comes from the server it is meant to protect against. Native apps from an app store do not have
+  this problem.
+- **Enforcement on the server.** The server cannot check that a body really is ciphertext (random
+  bytes look like ciphertext). Plain-text `MSG`s are still accepted: the Step 2–7 tests use them
+  to test routing. Our client always encrypts and marks any plain message it receives
+  "⚠ not encrypted", since it has no proof of who wrote it.
+
+**Reliability on ciphertext.** Nothing in Steps 3–7 reads the text:
+- id dedup, store-before-ACK, `seq`, `lastSeq` sync and fan-out all use the envelope;
+- `send()` seals *before* the message enters the outbox, so retries are byte-identical;
+- the outbox saved in `localStorage` holds only ciphertext;
+- after a reload, the page opens its own pending messages to show them.
+
+**UI.**
+- A lock bar under each chat header: "🔒 End-to-end encrypted · tap for safety number". In a group
+  it says "for N members".
+- Tapping it shows the 30-digit safety number.
+- A changed key turns the bar red, with an *accept* button.
+- Bubbles that do not decrypt say "🔒 Could not decrypt this message".
+- Unencrypted ones are marked "⚠ not encrypted".
+- The debug panel's frame log shows the real frames: `nonce`, `box`, `keys`.
+- Decrypted text still reaches the page only through `textContent`.
+
+**Metrics.** *…of them end-to-end encrypted* counts sealed messages per protocol: the server can
+tell a sealed body from text, but not read it. The database card shows "Messages stored: N
+(M encrypted)". Bytes on the wire now include the ciphertext overhead, for Step 9.
+
 ## Performance Evaluation (planned)
 - Latency (average sender → recipient time).
 - Protocol comparison: ChatProto over WebSocket vs MQTT over WebSocket (see the table in Step 5).
@@ -426,7 +596,7 @@ docs/        design document and diagrams
 - [x] Step 5 – MQTT: second application-layer protocol
 - [x] Step 6 – Live metrics dashboard
 - [x] Step 7 – Group chat
-- [ ] Step 8 – End-to-end encryption
+- [x] Step 8 – End-to-end encryption
 - [ ] Step 9 – Benchmarks and charts
 - [ ] Step 10 – Documentation, demo rehearsal, oral defense prep
 

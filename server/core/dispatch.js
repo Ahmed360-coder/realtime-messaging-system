@@ -4,6 +4,7 @@
 // the same join / sync / send / list logic and give exactly the same answers and errors.
 // Step 6: it also announces 'acked' and 'failure' on the hub (see hub.js) for the metrics.
 // Step 7: MSG to a '#group' goes to hub.sendGroup; GROUP (create / add / leave) to hub.changeGroup.
+// Step 8: WELCOME and USERS also carry the public keys; a sealed MSG takes the same path as a text one.
 
 const { performance } = require('node:perf_hooks');
 const ChatProto = require('../../protocols/chatproto');
@@ -47,7 +48,8 @@ function handleMessage(hub, session, msg, receivedAt) {
     case TYPES.HELLO: {
       const res = hub.join(session, msg.body);
       if (!res.ok) return fail(res.code, res.message);
-      reply(ChatProto.make(TYPES.WELCOME, { body: { username: session.username, users: res.users, known: res.known } }));
+      // Step 8: keys = the public key directory, so the client can encrypt to anyone at once.
+      reply(ChatProto.make(TYPES.WELCOME, { body: { username: session.username, users: res.users, known: res.known, keys: res.keys } }));
       // Offline sync: replay what this client missed, then tell it the replay is complete.
       // Same synchronous turn as join(), so nothing else can be delivered in between.
       const synced = hub.sync(session, msg.body.lastSeq || 0);
@@ -68,7 +70,7 @@ function handleMessage(hub, session, msg, receivedAt) {
       return reply(ackFor(msg, res));
     }
     case TYPES.LIST:
-      return reply(ChatProto.make(TYPES.USERS, { body: { users: hub.onlineUsers(), known: hub.knownUsers() } }));
+      return reply(ChatProto.make(TYPES.USERS, { body: { users: hub.onlineUsers(), known: hub.knownUsers(), keys: hub.publicKeys() } }));
   }
 }
 

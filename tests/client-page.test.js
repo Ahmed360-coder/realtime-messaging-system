@@ -19,7 +19,8 @@ test('the server serves the page and every script it loads', async () => {
     // Every <script src> and stylesheet the page references must exist on the server.
     const refs = [...html.matchAll(/(?:src|href)="(\/[^"]+)"/g)].map(m => m[1]);
     assert.deepEqual(refs, ['/style.css', '/stats', '/protocols/chatproto.js', '/protocols/mqtt-binding.js',
-                           '/vendor/mqtt.min.js', '/mqtt-socket.js', '/chat-client.js', '/conversations.js', '/app.js']);
+                           '/vendor/mqtt.min.js', '/mqtt-socket.js', '/vendor/nacl.min.js', '/e2e.js',
+                           '/chat-client.js', '/conversations.js', '/app.js']);
     for (const ref of refs) {
       const r = await fetch(base + ref);
       assert.equal(r.status, 200, `${ref} should be served`);
@@ -35,7 +36,7 @@ test('the page has the phone viewport meta tag', () => {
 });
 
 test('no client code uses innerHTML / outerHTML / insertAdjacentHTML / document.write (XSS)', () => {
-  for (const file of ['app.js', 'conversations.js', 'chat-client.js', 'mqtt-socket.js', 'index.html', 'stats.js', 'stats.html']) {
+  for (const file of ['app.js', 'conversations.js', 'chat-client.js', 'mqtt-socket.js', 'e2e.js', 'index.html', 'stats.js', 'stats.html']) {
     const code = fs.readFileSync(path.join(clientDir, file), 'utf8');
     assert.doesNotMatch(code, /\.(innerHTML|outerHTML)\s*=|insertAdjacentHTML|document\.write/, file);
   }

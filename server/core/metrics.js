@@ -105,7 +105,8 @@ function emptyProtocolStats() {
     // sent and group count LOGICAL messages (a group message = 1). delivered and stored count
     // RECIPIENT COPIES (a group message to 3 others, 2 online = delivered 2 + stored 1), so for
     // 1-to-1 they are exactly what they were in Step 6.
-    messages: { sent: 0, group: 0, delivered: 0, stored: 0, duplicate: 0, received: 0, synced: 0 },
+    // e2e (Step 8) counts the sent ones whose body was sealed (end-to-end encrypted).
+    messages: { sent: 0, group: 0, e2e: 0, delivered: 0, stored: 0, duplicate: 0, received: 0, synced: 0 },
     groupChanges: 0,         // membership changes: create / add / leave (Step 7)
     errors: {},              // ChatProto error code -> count
     rate: new RateWindow(),  // new messages sent per second
@@ -150,11 +151,13 @@ class Metrics {
 
   // A chat message from a sender of protocol e.protocol: status delivered | stored | duplicate.
   // recipients / delivered: copies to deliver and how many went out live (1-to-1: 1 and 1 or 0).
-  onMessage({ protocol, status, group = false, recipients = 1, delivered = status === 'delivered' ? 1 : 0 }) {
+  // e2e: the body was sealed (Step 8). The server can count that, but never read it.
+  onMessage({ protocol, status, group = false, recipients = 1, delivered = status === 'delivered' ? 1 : 0, e2e = false }) {
     const s = this.p[protocol];
     if (status === 'duplicate') { s.messages.duplicate++; return; } // a retry is not a new message
     s.messages.sent++;
     if (group) s.messages.group++;
+    if (e2e) s.messages.e2e++;
     s.messages.delivered += delivered;
     s.messages.stored += recipients - delivered;
     s.rate.add(this.second());

@@ -3,7 +3,10 @@
 // use it directly, so ordering, delivery ticks and unread counts are tested, not just clicked.
 //
 // One conversation per contact: the other user, or a group ('#study', Step 7). Each entry is
-//   { id, from, to, body, ts, seq, mine, status, error, recipients, delivered, event }
+//   { id, from, to, body, ts, seq, mine, status, error, recipients, delivered, event, security, sealed }
+// Step 8: `body` is always the decrypted text. `security` says how it arrived: 'e2e' (sealed and
+// authenticated), 'plain' (not encrypted) or 'failed' (sealed, but it did not open); null when
+// encryption is not in use. `sealed` keeps the ciphertext of a 'failed' one, to try again later.
 // where `status` only matters for our own messages:
 //   waiting   = sent, no ACK yet (or still in the outbox while offline)     🕓
 //   stored    = server stored it; recipient was offline (gets it at next     ✓
@@ -78,6 +81,7 @@
         id: msg.id, from: msg.from, to: msg.to, body: msg.body, ts: msg.ts,
         seq: msg.seq ?? null, mine: msg.from === this.me, status, error: null,
         recipients: null, delivered: null, event: null,
+        security: msg.security ?? null, sealed: msg.security === 'failed' ? msg.sealed : null,
       };
       this.byId.set(entry.id, entry);
       this.insert(this.contactOf(entry), entry);
@@ -117,6 +121,22 @@
         changed = true;
       }
       return changed;
+    }
+
+    /**
+     * Step 8: try to open the messages that did not decrypt again (e.g. after the user accepted
+     * a contact's new key). reveal(msg) -> { body, security }. Returns how many opened now.
+     */
+    reopenFailed(reveal) {
+      let n = 0;
+      for (const e of this.byId.values()) {
+        if (e.security !== 'failed' || !e.sealed) continue;
+        const r = reveal({ id: e.id, from: e.from, to: e.to, ts: e.ts, seq: e.seq, body: e.sealed });
+        if (r.security !== 'e2e') continue;
+        Object.assign(e, { body: r.body, security: 'e2e', sealed: null });
+        n++;
+      }
+      return n;
     }
 
     /** Apply an ACK frame's body ({ ref, seq, status }, for a group also { recipients, delivered }). */

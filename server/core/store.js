@@ -8,13 +8,18 @@
 // Step 7 (groups): a group message is ONE row (group_name set, recipient NULL), however many
 // members the group has (fan-out on read). Membership changes (create / add / leave) are rows
 // in the same table (kind != 'text'), so they get a seq and are replayed by offline sync too.
+//
+// Step 8 (end-to-end encryption): a sealed message body is stored as the JSON text of the
+// ciphertext object, with e2e = 1. The server has no key to open it. users.public_key holds
+// each user's Curve25519 public key, pinned at registration like the token.
 
 const { DatabaseSync } = require('node:sqlite');
 const crypto = require('node:crypto');
 
 // PRAGMA user_version: a free integer in the file header, used as our schema version.
 //   0 = Steps 3-6 (messages.recipient NOT NULL, no groups)   1 = Step 7 (groups)
-const SCHEMA_VERSION = 1;
+//   2 = Step 8 (users.public_key, messages.e2e)
+const SCHEMA_VERSION = 2;
 
 // The messages table, as a function of its name: the migration builds it as messages_new first.
 const messagesTable = name => `
@@ -28,9 +33,11 @@ const messagesTable = name => `
     sender     TEXT NOT NULL REFERENCES users(username),
     recipient  TEXT REFERENCES users(username),  -- 1-to-1 message: the other user
     group_name TEXT REFERENCES groups(name),     -- group message or membership change: the group
-    body       TEXT NOT NULL,             -- the text; for a membership change, JSON { users, members }
+    body       TEXT NOT NULL,             -- the text; for a membership change, JSON { users, members };
+                                          -- if e2e = 1, JSON of the sealed body { nonce, box[, keys] }
     ts         INTEGER NOT NULL,          -- sender's clock (used later for latency)
     stored_at  INTEGER NOT NULL,          -- server's clock
+    e2e        INTEGER NOT NULL DEFAULT 0 CHECK (e2e IN (0, 1)), -- Step 8: 1 = body is ciphertext
     CHECK ((recipient IS NULL) <> (group_name IS NULL)), -- exactly one of the two addresses
     CHECK (kind = 'text' OR group_name IS NOT NULL)      -- membership changes belong to a group
   )`;
@@ -41,7 +48,8 @@ const OTHER_TABLES = `
     username   TEXT PRIMARY KEY,
     token_hash TEXT NOT NULL,             -- SHA-256 of the client's secret token, never the token
     created_at INTEGER NOT NULL,          -- ms since epoch
-    last_seen  INTEGER NOT NULL
+    last_seen  INTEGER NOT NULL,
+    public_key TEXT                       -- Step 8: base64 Curve25519 public key (NULL until the first HELLO with a key)
   );
 
   CREATE TABLE IF NOT EXISTS groups (
@@ -87,25 +95,27 @@ class Store {
     // Prepared statements: SQL is compiled once, values are bound to the ? placeholders.
     // User text is never pasted into SQL, so SQL injection is impossible.
     this.sql = {
-      getUser: this.db.prepare('SELECT username, token_hash FROM users WHERE username = ?'),
+      getUser: this.db.prepare('SELECT username, token_hash, public_key FROM users WHERE username = ?'),
       addUser: this.db.prepare('INSERT INTO users (username, token_hash, created_at, last_seen) VALUES (?, ?, ?, ?)'),
       touchUser: this.db.prepare('UPDATE users SET last_seen = ? WHERE username = ?'),
       allUsers: this.db.prepare('SELECT username FROM users ORDER BY username'),
+      setKey: this.db.prepare('UPDATE users SET public_key = ? WHERE username = ? AND public_key IS NULL'),
+      allKeys: this.db.prepare('SELECT username, public_key FROM users WHERE public_key IS NOT NULL ORDER BY username'),
       addMessage: this.db.prepare(
-        'INSERT INTO messages (id, kind, sender, recipient, group_name, body, ts, stored_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)'),
+        'INSERT INTO messages (id, kind, sender, recipient, group_name, body, ts, stored_at, e2e) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)'),
       messageById: this.db.prepare('SELECT seq, sender FROM messages WHERE id = ?'),
       // Offline sync: three indexed range scans, merged and sorted by seq.
       //   1. 1-to-1 messages to me   2. 1-to-1 messages from me
       //   3. everything in the groups I am in now, from the moment I joined each of them
       // (UNION, not UNION ALL, so a message to myself is not listed twice.)
       messagesAfter: this.db.prepare(`
-        SELECT seq, id, kind, sender, recipient, group_name, body, ts FROM messages
+        SELECT seq, id, kind, sender, recipient, group_name, body, ts, e2e FROM messages
           WHERE recipient = :me AND seq > :after
         UNION
-        SELECT seq, id, kind, sender, recipient, group_name, body, ts FROM messages
+        SELECT seq, id, kind, sender, recipient, group_name, body, ts, e2e FROM messages
           WHERE sender = :me AND group_name IS NULL AND seq > :after
         UNION
-        SELECT m.seq, m.id, m.kind, m.sender, m.recipient, m.group_name, m.body, m.ts
+        SELECT m.seq, m.id, m.kind, m.sender, m.recipient, m.group_name, m.body, m.ts, m.e2e
           FROM group_members g JOIN messages m ON m.group_name = g.group_name
           WHERE g.username = :me AND m.seq >= g.joined_seq AND m.seq > :after
         ORDER BY seq`),
@@ -118,8 +128,14 @@ class Store {
       counts: this.db.prepare(`
         SELECT (SELECT COUNT(*) FROM messages) AS messages, (SELECT COUNT(*) FROM users) AS users,
                (SELECT COUNT(*) FROM groups) AS groups,
+               (SELECT COUNT(*) FROM messages WHERE e2e = 1) AS encrypted,
                (SELECT COALESCE(MAX(seq), 0) FROM messages) AS lastSeq`),
     };
+  }
+
+  // Column names of a table (to see whether a migration step has already been done).
+  columns(table) {
+    return this.db.prepare(`PRAGMA table_info(${table})`).all().map(c => c.name);
   }
 
   /**
@@ -127,6 +143,9 @@ class Store {
    * Version 0 -> 1: messages.recipient was NOT NULL REFERENCES users, and SQLite's ALTER TABLE
    * cannot drop a constraint. So the table is rebuilt, the way the SQLite manual describes it:
    * create the new table, copy every row (keeping its seq), drop the old one, rename the new one.
+   * Version 1 -> 2 (Step 8) only ADDS two columns, which ALTER TABLE ADD COLUMN can do in place:
+   * users.public_key (NULL: that user's next HELLO with a key sets it) and messages.e2e
+   * (DEFAULT 0: every older message was plain text).
    * All in one transaction: if anything fails, the old file is left exactly as it was.
    */
   migrate() {
@@ -136,7 +155,7 @@ class Store {
     this.transaction(() => {
       // First the new tables: RENAME below checks that every table messages refers to exists.
       this.db.exec(OTHER_TABLES);
-      if (hasOld) {
+      if (hasOld && version < 1) {
         const counter = this.db.prepare("SELECT seq FROM sqlite_sequence WHERE name = 'messages'").get();
         this.db.exec(`
           ${messagesTable('messages_new')};
@@ -149,6 +168,11 @@ class Store {
         if (counter) this.db.prepare("UPDATE sqlite_sequence SET seq = MAX(seq, ?) WHERE name = 'messages'").run(counter.seq);
       }
       this.db.exec(SCHEMA); // messages (if this is a new file) and the indexes
+      // Version 2: in a new file (or a rebuilt messages table) the columns already exist.
+      if (!this.columns('users').includes('public_key')) this.db.exec('ALTER TABLE users ADD COLUMN public_key TEXT');
+      if (!this.columns('messages').includes('e2e')) {
+        this.db.exec('ALTER TABLE messages ADD COLUMN e2e INTEGER NOT NULL DEFAULT 0 CHECK (e2e IN (0, 1))');
+      }
       this.db.exec(`PRAGMA user_version = ${SCHEMA_VERSION}`);
     });
   }
@@ -201,6 +225,32 @@ class Store {
     return this.sql.allUsers.all().map(r => r.username);
   }
 
+  // ---- Public keys (Step 8) ----
+
+  /** The registered public key of `username` (base64), or null. */
+  publicKey(username) {
+    const row = this.sql.getUser.get(username);
+    return row ? row.public_key : null;
+  }
+
+  /**
+   * Pin a public key: it is set once, when the user has none yet, and never replaced.
+   * Returns true if `key` is (now) the user's key, false if a different key is already registered.
+   */
+  pinPublicKey(username, key) {
+    return this.transaction(() => {
+      this.sql.setKey.run(key, username); // only changes a NULL key
+      return this.publicKey(username) === key;
+    });
+  }
+
+  /** { username: publicKey } of every user who has registered a key. */
+  publicKeys() {
+    const keys = {};
+    for (const r of this.sql.allKeys.all()) keys[r.username] = r.public_key;
+    return keys;
+  }
+
   /** The stored message with this id: { seq, from }, or null. Used to recognise a retry. */
   findMessage(id) {
     const row = this.sql.messageById.get(id);
@@ -210,6 +260,7 @@ class Store {
   /**
    * Store a message: { id, from, to, body, ts, kind }. `to` is a username (1-to-1) or a group
    * address ('#study'); `kind` is 'text' (default) or a membership change ('create' | 'add' | 'leave').
+   * `body` is a string, or (Step 8) a sealed object, stored as its JSON text with e2e = 1.
    * Returns { duplicate: false, seq } for a new id, or { duplicate: true, seq, from } if a
    * message with this id is already stored (a retry); nothing is written in that case.
    * Look-up and insert are one transaction. We look up first (instead of INSERT ... ON CONFLICT
@@ -218,10 +269,12 @@ class Store {
    */
   saveMessage({ id, from, to, body, ts, kind = 'text' }, now = Date.now()) {
     const group = to.startsWith('#');
+    const sealed = typeof body !== 'string';
     return this.transaction(() => {
       const existing = this.findMessage(id);
       if (existing) return { duplicate: true, seq: existing.seq, from: existing.from };
-      const res = this.sql.addMessage.run(id, kind, from, group ? null : to, group ? to : null, body, ts, now);
+      const res = this.sql.addMessage.run(id, kind, from, group ? null : to, group ? to : null,
+        sealed ? JSON.stringify(body) : body, ts, now, sealed ? 1 : 0);
       return { duplicate: false, seq: Number(res.lastInsertRowid) };
     });
   }
@@ -229,11 +282,13 @@ class Store {
   /**
    * Messages for `username` with seq > afterSeq, oldest first (offline sync): 1-to-1 messages
    * to or from them, and everything in their groups since they joined each one.
-   * Each is { seq, id, kind, from, to, body, ts }; `to` is a username or a group address.
+   * Each is { seq, id, kind, from, to, body, ts }; `to` is a username or a group address, and
+   * `body` is the text or (e2e = 1) the sealed object, exactly as the sender sent it.
    */
   messagesFor(username, afterSeq = 0) {
     return this.sql.messagesAfter.all({ me: username, after: afterSeq }).map(r => ({
-      seq: r.seq, id: r.id, kind: r.kind, from: r.sender, to: r.recipient ?? r.group_name, body: r.body, ts: r.ts,
+      seq: r.seq, id: r.id, kind: r.kind, from: r.sender, to: r.recipient ?? r.group_name,
+      body: r.e2e ? JSON.parse(r.body) : r.body, ts: r.ts,
     }));
   }
 
@@ -268,10 +323,10 @@ class Store {
     return this.sql.groupsOf.all(username).map(r => r.group_name);
   }
 
-  /** Totals for the metrics dashboard: { messages, users, groups, lastSeq }. Unlike counters, they survive restarts. */
+  /** Totals for the metrics dashboard: { messages, users, groups, encrypted, lastSeq }. Unlike counters, they survive restarts. */
   counts() {
-    const { messages, users, groups, lastSeq } = this.sql.counts.get();
-    return { messages, users, groups, lastSeq };
+    const { messages, users, groups, encrypted, lastSeq } = this.sql.counts.get();
+    return { messages, users, groups, encrypted, lastSeq };
   }
 
   close() {

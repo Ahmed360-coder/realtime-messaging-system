@@ -169,3 +169,20 @@ test('leaving removes the group from the list; being added again shows it again'
   assert.deepEqual(c.contacts(['alice', 'me']).map(r => r.name), ['#g', 'alice']);
   assert.equal(c.messages('#g').length, 1); // only the "added you" line: history before it is not ours
 });
+
+test('Step 8: entries keep how they arrived; failed ones can be opened later', () => {
+  const c = new Conversations('alice');
+  const sealedBody = { nonce: 'n', box: 'b' };
+  c.addReceived({ ...msg('bob', 'alice', '', 1), security: 'failed', sealed: sealedBody });
+  c.addReceived({ ...msg('bob', 'alice', 'hi', 2), security: 'plain' });
+  assert.deepEqual(c.messages('bob').map(e => e.security), ['failed', 'plain']);
+  assert.deepEqual(c.messages('bob')[0].sealed, sealedBody);
+  assert.equal(c.messages('bob')[1].sealed, null);
+  // e.g. after the user accepted bob's new key
+  const seen = [];
+  const opened = c.reopenFailed(m => { seen.push(m.body); return { body: 'now readable', security: 'e2e' }; });
+  assert.equal(opened, 1);
+  assert.deepEqual(seen, [sealedBody], 'reveal gets the ciphertext back');
+  assert.deepEqual([c.messages('bob')[0].body, c.messages('bob')[0].security, c.messages('bob')[0].sealed], ['now readable', 'e2e', null]);
+  assert.equal(c.reopenFailed(() => assert.fail('nothing left to open')), 0);
+});

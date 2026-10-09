@@ -215,3 +215,65 @@ test('sync merges 1-to-1 and group messages into one seq order', () => {
   assert.deepEqual(s.messagesFor('bob', b).map(m => m.body), ['dm 2', 'group 2']);
   s.close();
 });
+
+// ---- Step 8: end-to-end encryption ----
+
+const KEY_1 = 'A'.repeat(43) + '=';
+const KEY_2 = 'B'.repeat(43) + '=';
+
+test('public keys: pinned once, never replaced; the directory lists users with a key', () => {
+  const s = freshStore();
+  assert.equal(s.publicKey('alice'), null);
+  assert.equal(s.pinPublicKey('alice', KEY_1), true);
+  assert.equal(s.pinPublicKey('alice', KEY_1), true);  // the same key again
+  assert.equal(s.pinPublicKey('alice', KEY_2), false); // a different key is refused
+  assert.equal(s.publicKey('alice'), KEY_1);
+  assert.deepEqual(s.publicKeys(), { alice: KEY_1 }); // bob has none yet
+  s.close();
+});
+
+test('a sealed body is stored as JSON text with e2e = 1 and comes back as the same object', () => {
+  const s = freshStore();
+  const body = { nonce: 'n'.repeat(32), box: 'b'.repeat(24) };
+  s.saveMessage({ ...msg('alice', 'bob', 'x'), body });
+  s.saveMessage(msg('alice', 'bob', 'plain'));
+  const rows = s.db.prepare('SELECT body, e2e FROM messages ORDER BY seq').all();
+  assert.deepEqual(rows.map(r => r.e2e), [1, 0]);
+  assert.equal(typeof rows[0].body, 'string');
+  assert.deepEqual(s.messagesFor('bob').map(m => m.body), [body, 'plain']);
+  assert.equal(s.counts().encrypted, 1);
+  s.close();
+});
+
+test('migration 1 -> 2: a Step 7 chat.db gains users.public_key and messages.e2e, keeping every row', () => {
+  const { file, cleanup } = tempDbPath();
+  try {
+    // A database file exactly as Step 7 created it (schema version 1).
+    const db = new DatabaseSync(file);
+    db.exec(`
+      CREATE TABLE users (username TEXT PRIMARY KEY, token_hash TEXT NOT NULL, created_at INTEGER NOT NULL, last_seen INTEGER NOT NULL);
+      CREATE TABLE groups (name TEXT PRIMARY KEY, created_by TEXT NOT NULL REFERENCES users(username), created_at INTEGER NOT NULL);
+      CREATE TABLE group_members (group_name TEXT NOT NULL REFERENCES groups(name), username TEXT NOT NULL REFERENCES users(username),
+        joined_seq INTEGER NOT NULL, PRIMARY KEY (group_name, username));
+      CREATE TABLE messages (
+        seq INTEGER PRIMARY KEY AUTOINCREMENT, id TEXT NOT NULL UNIQUE,
+        kind TEXT NOT NULL DEFAULT 'text' CHECK (kind IN ('text', 'create', 'add', 'leave')),
+        sender TEXT NOT NULL REFERENCES users(username), recipient TEXT REFERENCES users(username),
+        group_name TEXT REFERENCES groups(name), body TEXT NOT NULL, ts INTEGER NOT NULL, stored_at INTEGER NOT NULL,
+        CHECK ((recipient IS NULL) <> (group_name IS NULL)), CHECK (kind = 'text' OR group_name IS NOT NULL));
+      INSERT INTO users VALUES ('alice', 'h', 1, 1), ('bob', 'h', 1, 1);
+      INSERT INTO messages (id, sender, recipient, body, ts, stored_at) VALUES ('m1', 'alice', 'bob', 'from step 7', 1, 1);
+      PRAGMA user_version = 1;`);
+    db.close();
+
+    const s = new Store(file);
+    assert.equal(s.db.prepare('PRAGMA user_version').get().user_version, SCHEMA_VERSION);
+    assert.ok(s.columns('users').includes('public_key'));
+    assert.ok(s.columns('messages').includes('e2e'));
+    assert.deepEqual(s.messagesFor('bob').map(m => m.body), ['from step 7']);
+    assert.equal(s.db.prepare('SELECT e2e FROM messages').get().e2e, 0, 'older messages were plain text');
+    s.close();
+  } finally {
+    cleanup();
+  }
+});

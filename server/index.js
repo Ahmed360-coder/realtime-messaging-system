@@ -4,6 +4,7 @@
 // Step 3: reliability - messages and users persisted in SQLite (chat.db).
 // Step 5: MQTT over WebSocket (path /mqtt), a second protocol on the same hub.
 // Step 6: live metrics (server/core/metrics.js) and the /stats dashboard (server/stats-routes.js).
+// Step 8: end-to-end encryption happens in the browser; the server only serves TweetNaCl.
 
 const http = require('http');
 const path = require('path');
@@ -45,6 +46,10 @@ async function startServer({ port = PORT, host = HOST, dbPath = DB_PATH, log = c
   // the browser build chart.umd.min.js sits next to it.)
   const chartDir = path.dirname(require.resolve('chart.js'));
   app.get('/vendor/chart.umd.min.js', (req, res) => res.sendFile('chart.umd.min.js', { root: chartDir }));
+  // Step 8: TweetNaCl (end-to-end encryption in the browser), the same way. nacl-fast is the
+  // same API as nacl.js with unrolled loops: same results, several times faster on a phone.
+  const naclDir = path.dirname(require.resolve('tweetnacl'));
+  app.get('/vendor/nacl.min.js', (req, res) => res.sendFile('nacl-fast.min.js', { root: naclDir }));
 
   const store = new Store(dbPath);
   const hub = new Hub({ store, log });

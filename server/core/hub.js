@@ -16,8 +16,9 @@
 // listens (server/core/metrics.js counts them). `protocol` is that session's protocol; receivedAt
 // is the monotonic time (performance.now()) at which the message's frame reached the server.
 //   'message'   { protocol, status, receivedAt,   a chat message was delivered / stored / a duplicate;
-//                 group, recipients, delivered }  recipients = copies to deliver (1 for 1-to-1, members - 1
-//                                                 for a group), delivered = how many went out live
+//                 group, recipients, delivered,   recipients = copies to deliver (1 for 1-to-1, members - 1
+//                 e2e }                           for a group), delivered = how many went out live,
+//                                                 e2e = the body was sealed (Step 8)
 //   'delivered' { protocol, receivedAt }          one copy of a MSG was written to a recipient's connection
 //   'acked'     { protocol, receivedAt }          its ACK was written to the sender's connection (dispatch.js)
 //   'synced'    { protocol, count }               offline sync replayed `count` messages
@@ -27,6 +28,12 @@
 // Groups (Step 7): a group message is stored ONCE, then the hub pushes a copy to every online
 // member except the sender (fan-out); offline members get it from sync(). Membership changes are
 // stored in the same message log, so they share the seq order, the id dedup and offline sync.
+//
+// End-to-end encryption (Step 8): the hub never encrypts or decrypts anything. It only
+//   - pins each user's public key at join (like the token) and hands the keys out (key directory);
+//   - stores and forwards a sealed body exactly like a text body: id, seq, dedup, sync and
+//     fan-out never look inside it;
+//   - checks that a sealed group message carries a key box for exactly the current members.
 
 const { EventEmitter } = require('node:events');
 const { performance } = require('node:perf_hooks');
@@ -51,17 +58,29 @@ class Hub extends EventEmitter {
     return this.store.knownUsers();
   }
 
+  // Step 8: the key directory, { username: public key } of every user who has one.
+  publicKeys() {
+    return this.store.publicKeys();
+  }
+
   /**
    * Bind a username to a session. The token proves this is the same device that registered
    * the name. If that user already has a live session (e.g. a phone that lost Wi-Fi and
    * reconnected before the old socket timed out), the new session takes over.
-   * Returns { ok: true, users, known } or { ok: false, code, message }.
+   * Step 8: `key` (optional) is the device's public key. The first one is pinned; a different
+   * key later is refused (KEY_MISMATCH), so the server cannot be asked to swap a user's key.
+   * Returns { ok: true, users, known, keys } or { ok: false, code, message }.
    */
-  join(session, { username, token }) {
+  join(session, { username, token, key }) {
     if (session.username) return fail(ERRORS.ALREADY_JOINED, 'already joined');
-    if (!this.store.claimUser(username, token)) {
-      return fail(ERRORS.NAME_TAKEN, `"${username}" belongs to another device`);
-    }
+    const claim = this.store.transaction(() => {
+      if (!this.store.claimUser(username, token)) return fail(ERRORS.NAME_TAKEN, `"${username}" belongs to another device`);
+      if (key && !this.store.pinPublicKey(username, key)) {
+        return fail(ERRORS.KEY_MISMATCH, `"${username}" is registered with a different public key`);
+      }
+      return { ok: true };
+    });
+    if (!claim.ok) return claim;
 
     const old = this.users.get(username);
     session.username = username;
@@ -76,7 +95,7 @@ class Hub extends EventEmitter {
       this.log(`+ ${username} joined via ${session.protocol} (${this.users.size} online)`);
       this.broadcastPresence(username, 'online');
     }
-    return { ok: true, users: this.onlineUsers(), known: this.knownUsers() };
+    return { ok: true, users: this.onlineUsers(), known: this.knownUsers(), keys: this.publicKeys() };
   }
 
   /**
@@ -125,7 +144,8 @@ class Hub extends EventEmitter {
 
     const target = this.users.get(msg.to);
     const status = target ? 'delivered' : 'stored';
-    this.emit('message', { protocol: session.protocol, status, receivedAt, group: false, recipients: 1, delivered: target ? 1 : 0 });
+    this.emit('message', { protocol: session.protocol, status, receivedAt, group: false, recipients: 1,
+      delivered: target ? 1 : 0, e2e: ChatProto.isSealed(msg.body) });
     // The callback runs once the transport has written the MSG to the recipient's connection.
     if (target) {
       target.deliver(toWire({ ...stored, seq: res.seq }),
@@ -152,6 +172,13 @@ class Hub extends EventEmitter {
       if (!this.store.getGroup(msg.to)) return fail(ERRORS.UNKNOWN_GROUP, `no group ${msg.to}`);
       const members = this.store.groupMembers(msg.to);
       if (!members.includes(me)) return fail(ERRORS.NOT_MEMBER, `you are not a member of ${msg.to}`);
+      // Step 8: a sealed message must have a key box for exactly the current members (sender
+      // included, so they can read their own history). Otherwise a member just added could not
+      // read it, or one who just left could. Refused BEFORE storing: the id stays unused, and
+      // the client re-seals for the new member list and sends it again with the same id.
+      if (ChatProto.isSealed(msg.body) && !sameMembers(Object.keys(msg.body.keys), members)) {
+        return fail(ERRORS.STALE_MEMBERS, `the members of ${msg.to} have changed: ${members.join(', ')}`);
+      }
       const stored = { id: msg.id, from: me, to: msg.to, body: msg.body, ts: msg.ts };
       const { seq } = this.store.saveMessage(stored);
       return { ok: true, seq, stored, members };
@@ -166,7 +193,8 @@ class Hub extends EventEmitter {
     const delivered = this.fanOut(others, toWire({ ...res.stored, seq: res.seq }),
       target => this.emit('delivered', { protocol: target.protocol, receivedAt }));
     const status = others.length > 0 && delivered === others.length ? 'delivered' : 'stored';
-    this.emit('message', { protocol: session.protocol, status, receivedAt, group: true, recipients: others.length, delivered });
+    this.emit('message', { protocol: session.protocol, status, receivedAt, group: true, recipients: others.length,
+      delivered, e2e: ChatProto.isSealed(msg.body) });
     return { ok: true, seq: res.seq, status, recipients: others.length, delivered };
   }
 
@@ -261,8 +289,11 @@ class Hub extends EventEmitter {
   }
 
   // Tell everyone except the user themself that they came online / went offline.
+  // Step 8: 'online' also carries their public key, so a user who registered after our
+  // WELCOME can be written to at once.
   broadcastPresence(username, status) {
-    const event = ChatProto.make(TYPES.PRESENCE, { body: { username, status } });
+    const key = status === 'online' ? this.store.publicKey(username) : null;
+    const event = ChatProto.make(TYPES.PRESENCE, { body: key ? { username, status, key } : { username, status } });
     for (const [name, s] of this.users) {
       if (name !== username) s.deliver(event);
     }
@@ -278,5 +309,7 @@ function toWire({ seq, id, kind = 'text', from, to, body, ts }) {
 
 const fail = (code, message) => ({ ok: false, code, message });
 const unique = list => [...new Set(list)];
+// Same usernames, ignoring order (both lists are free of repeats: object keys / a primary key).
+const sameMembers = (a, b) => a.length === b.length && a.every(u => b.includes(u));
 
 module.exports = { Hub };

@@ -10,6 +10,15 @@
 //  - offline sync:  HELLO carries `lastSeq`, the highest server seq received; the server
 //                   replays everything after it.
 //  - reconnect:     automatic, with exponential backoff + jitter.
+//
+// End-to-end encryption (Step 8), when an E2E.KeyRing is set as `e2e` (see client/e2e.js):
+//  - HELLO carries our public key; WELCOME / USERS / PRESENCE keys go into the key ring;
+//  - send() seals the text BEFORE the message enters the outbox, so the outbox, every retry
+//    and the copy saved in localStorage are ciphertext; a retry re-sends the identical frame;
+//  - every received MSG is opened before the 'message' event: body = the text, plus `security`
+//    ('e2e' | 'plain' | 'failed') and `sealed` (the ciphertext as it came);
+//  - a group message refused with STALE_MEMBERS (someone joined or left meanwhile) is sealed
+//    again for the new member list and re-sent with the SAME id (the server never stored it).
 
 (function (root, factory) {
   if (typeof module === 'object' && module.exports) module.exports = factory(require('../protocols/chatproto'));
@@ -20,6 +29,7 @@
   const { TYPES } = ChatProto;
   const OPEN = 1; // WebSocket.OPEN, the same value in browsers and in the ws library
   const CLOSE_ACK_TIMEOUT = 4000; // our own close code: "gave up waiting for ACKs"
+  const MAX_RESEALS = 3; // STALE_MEMBERS: re-seal at most this often, then give up (shows as refused)
 
   class ChatClient {
     /**
@@ -32,10 +42,12 @@
      * ackTimeoutMs:  how long to wait for an ACK before re-sending
      * maxMissedAcks: after this many unanswered sends, assume the connection is dead and reconnect
      * backoffMinMs / backoffMaxMs: reconnect delay grows 0.5 s, 1 s, 2 s ... up to the max
+     * e2e:           optional E2E.KeyRing (Step 8); null = plain text, as in Steps 2-7.
+     *                The page sets it per username before join().
      */
-    constructor({ url, token, WebSocket = globalThis.WebSocket, openSocket = null,
+    constructor({ url, token, WebSocket = globalThis.WebSocket, openSocket = null, e2e = null,
                   ackTimeoutMs = 3000, maxMissedAcks = 3, backoffMinMs = 500, backoffMaxMs = 10000 }) {
-      Object.assign(this, { url, token, WebSocket, ackTimeoutMs, maxMissedAcks, backoffMinMs, backoffMaxMs });
+      Object.assign(this, { url, token, WebSocket, e2e, ackTimeoutMs, maxMissedAcks, backoffMinMs, backoffMaxMs });
       this.openSocket = openSocket || (() => new this.WebSocket(this.url));
       this.ws = null;
       this.username = null;    // wanted username; remembered so reconnects re-join automatically
@@ -80,17 +92,22 @@
     }
 
     sendHello() {
-      const hello = ChatProto.make(TYPES.HELLO, { body: { username: this.username, token: this.token, lastSeq: this.lastSeq } });
+      const body = { username: this.username, token: this.token, lastSeq: this.lastSeq };
+      if (this.e2e) body.key = this.e2e.publicKey; // registered (and pinned) by the server at the first HELLO
+      const hello = ChatProto.make(TYPES.HELLO, { body });
       this.helloId = hello.id;
       this.sendFrame(hello);
     }
 
     /**
      * Send a chat message reliably. `to` is a username or a group ('#study').
-     * Returns the message (its id identifies it in later events).
+     * Returns the message frame as sent (its id identifies it in later events). With e2e, its
+     * body is the sealed object; if the text cannot be sealed for every recipient, this throws
+     * an E2E.E2EError and nothing is sent.
      */
     send(to, body) {
       const msg = ChatProto.make(TYPES.MSG, { to, body });
+      if (this.e2e) msg.body = this.e2e.seal(msg, body);
       this.seen.add(msg.id); // if the server ever replays our own message to us, ignore it
       return this.enqueue(msg);
     }
@@ -176,6 +193,7 @@
         case TYPES.WELCOME:
           this.joined = true;
           this.reconnects = 0; // connection is healthy again: reset the backoff
+          this.learnKeys(msg.body.keys);
           return this.emit('welcome', msg.body);
 
         case TYPES.SYNCED:
@@ -183,17 +201,22 @@
           this.emit('synced', msg.body);
           return this.flushPending();
 
-        case TYPES.MSG:
+        case TYPES.MSG: {
           // Advance the cursor even for a duplicate: having seen it means we have it.
           if (msg.seq > this.lastSeq) this.lastSeq = msg.seq;
-          if (this.seen.has(msg.id)) return this.emit('duplicate', msg);
+          // Step 8: decrypt here, so the page only ever gets text (and how safe it was).
+          const shown = this.e2e ? this.e2e.reveal(msg) : msg;
+          if (this.seen.has(msg.id)) return this.emit('duplicate', shown);
           this.seen.add(msg.id);
-          return this.emit('message', msg);
+          return this.emit('message', shown);
+        }
 
         case TYPES.GROUP:
           // A membership change (Step 7): part of the same seq stream as MSG, so it moves the
           // sync cursor and is deduplicated the same way. A replayed one adds nothing new.
           if (msg.seq > this.lastSeq) this.lastSeq = msg.seq;
+          // Step 8: the key ring encrypts each group message to exactly these members.
+          if (this.e2e && Array.isArray(msg.body.members)) this.e2e.setMembers(msg.to, msg.body.members, msg.seq);
           if (this.seen.has(msg.id)) return;
           this.seen.add(msg.id);
           return this.emit('group', msg);
@@ -211,6 +234,9 @@
         case TYPES.ERROR: {
           const ref = msg.body.ref;
           if (ref && ref === this.helloId) this.username = null; // join refused: don't retry it on reconnect
+          // Step 8: our group message was sealed for an old member list. The GROUP event with the
+          // new list came before this ERROR (one connection is FIFO), so re-seal and re-send.
+          if (msg.body.code === ChatProto.ERRORS.STALE_MEMBERS && this.reseal(ref)) return;
           // The server refused this message (e.g. UNKNOWN_USER): re-sending cannot help.
           const p = ref && this.pending.get(ref);
           if (p) {
@@ -221,12 +247,41 @@
           return this.emit('serverError', msg.body, p ? p.msg : null);
         }
 
-        case TYPES.PRESENCE: return this.emit('presence', msg.body);
-        case TYPES.USERS: return this.emit('users', msg.body);
+        case TYPES.PRESENCE:
+          if (msg.body.key) this.learnKeys({ [msg.body.username]: msg.body.key });
+          return this.emit('presence', msg.body);
+        case TYPES.USERS:
+          this.learnKeys(msg.body.keys);
+          return this.emit('users', msg.body);
         // BYE (MQTT only): the socket adapter closes with body.code right after this frame,
         // so it arrives here as a normal close (see onClosed).
         case TYPES.BYE: return;
       }
+    }
+
+    // Step 8: public keys from the server go into the key ring. A key that differs from the one
+    // we pinned is NOT used; 'keychange' tells the page to warn the user.
+    learnKeys(keys) {
+      if (!this.e2e || !keys) return;
+      for (const user of this.e2e.learnAll(keys)) this.emit('keychange', user);
+    }
+
+    // Step 8: seal pending group message `id` again for the current members; same id, ts, text.
+    // Returns false if that is not possible (then the ERROR is handled as a refusal).
+    reseal(id) {
+      const p = id && this.pending.get(id);
+      if (!p || !this.e2e || (p.reseals || 0) >= MAX_RESEALS) return false;
+      try {
+        p.msg = { ...p.msg, body: this.e2e.reseal(p.msg) };
+      } catch (e) {
+        return false; // e.g. a new member's key is unknown or changed
+      }
+      p.reseals = (p.reseals || 0) + 1;
+      p.attempts = 0;
+      this.emit('outbox', this.outbox()); // the saved outbox gets the new ciphertext
+      this.emit('resealed', p.msg);
+      this.transmit(id);
+      return true;
     }
 
     onClosed(code) {

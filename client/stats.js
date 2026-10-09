@@ -33,6 +33,8 @@
     ['Per second (10 s avg)', p => p.rate.toFixed(1)],
     ['Sent (new)', p => int(p.messages.sent)],
     ['…of them to groups', p => int(p.messages.group)],
+    // Step 8: the server can tell a sealed body from plain text, but cannot read it.
+    ['…of them end-to-end encrypted', p => int(p.messages.e2e)],
     // Step 7: counted per RECIPIENT copy (a group message to 3 others counts 3); 1-to-1 = 1 copy.
     ['Copies delivered live', p => int(p.messages.delivered)],
     ['Copies stored for offline', p => int(p.messages.stored)],
@@ -161,7 +163,7 @@
 
     const db = snap.database;
     fillList($('database'), db ? [
-      [`Messages stored: ${int(db.messages)}`],
+      [`Messages stored: ${int(db.messages)} (${int(db.encrypted)} encrypted)`],
       [`Registered users: ${int(db.users)}`],
       [`Groups: ${int(db.groups)}`],
       [`Last seq: ${int(db.lastSeq)}`],

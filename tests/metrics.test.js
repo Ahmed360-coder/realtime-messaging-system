@@ -68,7 +68,7 @@ function fixture() {
 test('Metrics: hub events become per-protocol counters, rate and errors', () => {
   const { hub, clock, metrics } = fixture();
   hub.emit('message', { protocol: 'ws', status: 'delivered', receivedAt: clock.now() });
-  hub.emit('message', { protocol: 'ws', status: 'stored', receivedAt: clock.now() });
+  hub.emit('message', { protocol: 'ws', status: 'stored', receivedAt: clock.now(), e2e: true }); // Step 8: sealed
   hub.emit('message', { protocol: 'ws', status: 'duplicate', receivedAt: clock.now() });
   hub.emit('message', { protocol: 'mqtt', status: 'delivered', receivedAt: clock.now() });
   hub.emit('synced', { protocol: 'mqtt', count: 4 });
@@ -79,7 +79,7 @@ test('Metrics: hub events become per-protocol counters, rate and errors', () => 
 
   const snap = metrics.snapshot();
   const { ws, mqtt } = snap.protocols;
-  assert.deepEqual(ws.messages, { sent: 2, group: 0, delivered: 1, stored: 1, duplicate: 1, received: 0, synced: 0 });
+  assert.deepEqual(ws.messages, { sent: 2, group: 0, e2e: 1, delivered: 1, stored: 1, duplicate: 1, received: 0, synced: 0 });
   assert.equal(mqtt.messages.sent, 1);
   assert.equal(mqtt.messages.synced, 4);
   assert.deepEqual(ws.errors, { BAD_JSON: 2 });
