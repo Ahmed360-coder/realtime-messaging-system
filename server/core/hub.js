@@ -3,7 +3,7 @@
 // (server/transports: WebSocket, MQTT) wraps a connection in a "session" and calls the hub:
 //
 //   session = { username: null, protocol: 'ws' | 'mqtt',
-//               deliver(msg) { ...encode + send... },
+//               deliver(msg, onSent) { ...encode + send; onSent() once written... },
 //               close(code, reason) { ...close the connection... } }
 //
 // Messages passed to deliver() use the ChatProto message model (v, type, id, ts, from, to, body, seq);
@@ -11,12 +11,24 @@
 //
 // Reliability (Step 3): every chat message is written to the store BEFORE the hub answers,
 // so an ACK always means "safely on disk". Offline recipients get it later via sync().
+//
+// Events (Step 6): the hub is an EventEmitter and announces what happened, without knowing who
+// listens (server/core/metrics.js counts them). `protocol` is that session's protocol; receivedAt
+// is the monotonic time (performance.now()) at which the message's frame reached the server.
+//   'message'   { protocol, status, receivedAt }  a chat message was delivered / stored / a duplicate
+//   'delivered' { protocol, receivedAt }          its MSG was written to the recipient's connection
+//   'acked'     { protocol, receivedAt }          its ACK was written to the sender's connection (dispatch.js)
+//   'synced'    { protocol, count }               offline sync replayed `count` messages
+//   'failure'   { protocol, code }                an ERROR reply, or INTERNAL (dispatch.js)
 
+const { EventEmitter } = require('node:events');
+const { performance } = require('node:perf_hooks');
 const ChatProto = require('../../protocols/chatproto');
 const { TYPES, ERRORS } = ChatProto;
 
-class Hub {
+class Hub extends EventEmitter {
   constructor({ store, log = () => {} }) {
+    super();
     this.store = store;
     this.users = new Map(); // username -> session (one live session per username)
     this.log = log;
@@ -69,6 +81,7 @@ class Hub {
   sync(session, lastSeq = 0) {
     const missed = this.store.messagesFor(session.username, lastSeq);
     for (const m of missed) session.deliver(toWire(m));
+    this.emit('synced', { protocol: session.protocol, count: missed.length });
     if (missed.length) this.log(`  replayed ${missed.length} message(s) to ${session.username} after seq ${lastSeq}`);
     return { count: missed.length, lastSeq: missed.length ? missed[missed.length - 1].seq : lastSeq };
   }
@@ -90,7 +103,7 @@ class Hub {
    * A retried id is not stored or delivered again; it gets the original seq back.
    * Returns { ok: true, seq, status: 'delivered'|'stored'|'duplicate' } or { ok: false, code, message }.
    */
-  sendDirect(session, msg) {
+  sendDirect(session, msg, receivedAt = performance.now()) {
     if (!this.store.userExists(msg.to)) return fail(ERRORS.UNKNOWN_USER, `"${msg.to}" has never joined`);
 
     const stored = { id: msg.id, from: session.username, to: msg.to, body: msg.body, ts: msg.ts };
@@ -99,12 +112,19 @@ class Hub {
       // Same id from someone else is not a retry: refuse instead of acknowledging their message.
       if (res.from !== session.username) return fail(ERRORS.BAD_FIELD, 'id already used by another message');
       this.log(`  duplicate ${msg.id.slice(0, 8)} from ${session.username} (seq ${res.seq}), not stored again`);
+      this.emit('message', { protocol: session.protocol, status: 'duplicate', receivedAt });
       return { ok: true, seq: res.seq, status: 'duplicate' };
     }
 
     const target = this.users.get(msg.to);
-    if (target) target.deliver(toWire({ ...stored, seq: res.seq }));
-    return { ok: true, seq: res.seq, status: target ? 'delivered' : 'stored' };
+    const status = target ? 'delivered' : 'stored';
+    this.emit('message', { protocol: session.protocol, status, receivedAt });
+    // The callback runs once the transport has written the MSG to the recipient's connection.
+    if (target) {
+      target.deliver(toWire({ ...stored, seq: res.seq }),
+        () => this.emit('delivered', { protocol: target.protocol, receivedAt }));
+    }
+    return { ok: true, seq: res.seq, status };
   }
 
   // Tell everyone except the user themself that they came online / went offline.

@@ -3,6 +3,7 @@
 // Step 2: ChatProto v1 over WebSocket on the same port (path /ws).
 // Step 3: reliability - messages and users persisted in SQLite (chat.db).
 // Step 5: MQTT over WebSocket (path /mqtt), a second protocol on the same hub.
+// Step 6: live metrics (server/core/metrics.js) and the /stats dashboard (server/stats-routes.js).
 
 const http = require('http');
 const path = require('path');
@@ -11,6 +12,8 @@ const qrcode = require('qrcode-terminal');
 const { getLocalIP } = require('./network');
 const { Hub } = require('./core/hub');
 const { Store } = require('./core/store');
+const { Metrics } = require('./core/metrics');
+const { mountStatsRoutes } = require('./stats-routes');
 const { createWebSocketEndpoint } = require('./transports/websocket');
 const { createMqttEndpoint } = require('./transports/mqtt');
 const MqttBinding = require('../protocols/mqtt-binding');
@@ -23,7 +26,7 @@ const HOST = '0.0.0.0';
 const DB_PATH = process.env.DB_PATH || path.join(__dirname, '..', 'chat.db');
 
 /**
- * Build and start the server. Returns a Promise of { port, hub, store, close() }.
+ * Build and start the server. Returns a Promise of { port, hub, store, metrics, close() }.
  * port 0 lets the OS pick a free port (used by the tests).
  */
 async function startServer({ port = PORT, host = HOST, dbPath = DB_PATH, log = console.log } = {}) {
@@ -38,9 +41,16 @@ async function startServer({ port = PORT, host = HOST, dbPath = DB_PATH, log = c
   const mqttBundle = require.resolve('mqtt/dist/mqtt.min');
   // root: only the file name is checked, so the path may contain folders like ".claude".
   app.get('/vendor/mqtt.min.js', (req, res) => res.sendFile(path.basename(mqttBundle), { root: path.dirname(mqttBundle) }));
+  // Chart.js for the dashboard chart, served the same way. ("chart.js" resolves to dist/chart.cjs;
+  // the browser build chart.umd.min.js sits next to it.)
+  const chartDir = path.dirname(require.resolve('chart.js'));
+  app.get('/vendor/chart.umd.min.js', (req, res) => res.sendFile('chart.umd.min.js', { root: chartDir }));
 
   const store = new Store(dbPath);
   const hub = new Hub({ store, log });
+  // Listens to the hub's events; the hub works the same without it.
+  const metrics = new Metrics({ hub, store });
+  const stats = mountStatsRoutes(app, metrics);
 
   // Simple health check: lets a phone (or a script) confirm the server is alive.
   app.get('/api/health', (req, res) => {
@@ -56,6 +66,7 @@ async function startServer({ port = PORT, host = HOST, dbPath = DB_PATH, log = c
   try {
     mqtt = await createMqttEndpoint(hub, { log });
   } catch (err) {
+    stats.close();
     store.close();
     throw err;
   }
@@ -65,24 +76,30 @@ async function startServer({ port = PORT, host = HOST, dbPath = DB_PATH, log = c
   // "Upgrade: websocket" is handed to the endpoint for its path. (Two ws servers attached to
   // one HTTP server would each refuse the other's path, so we route here.)
   const endpoints = { '/ws': ws, [MqttBinding.PATH]: mqtt.wss };
+  const protocolOf = { '/ws': 'ws', [MqttBinding.PATH]: 'mqtt' };
   const httpServer = http.createServer(app);
   httpServer.on('upgrade', (req, socket, head) => {
-    const wss = endpoints[new URL(req.url, 'http://localhost').pathname];
+    const pathname = new URL(req.url, 'http://localhost').pathname;
+    const wss = endpoints[pathname];
     if (!wss) {
       socket.end('HTTP/1.1 404 Not Found\r\nConnection: close\r\n\r\n');
       return;
     }
+    // Count this TCP connection and its bytes (both directions) under its protocol.
+    metrics.trackSocket(socket, protocolOf[pathname]);
     wss.handleUpgrade(req, socket, head, conn => wss.emit('connection', conn, req));
   });
 
   return new Promise((resolve, reject) => {
-    httpServer.once('error', async (err) => { await mqtt.close(); store.close(); reject(err); });
+    httpServer.once('error', async (err) => { stats.close(); await mqtt.close(); store.close(); reject(err); });
     httpServer.listen(port, host, () => {
       resolve({
         port: httpServer.address().port,
         hub,
         store,
+        metrics,
         close: async () => {
+          stats.close(); // end the dashboards' SSE streams, or httpServer.close() would wait forever
           // Wait for every connection's close handler (which calls hub.leave -> store)
           // before closing the database underneath it.
           const closed = [...ws.clients].map(c => new Promise(r => c.once('close', r)));
@@ -107,6 +124,7 @@ if (require.main === module) {
     console.log(`  On phones:      ${url}  (same Wi-Fi)`);
     console.log(`  WebSocket:      ws://${getLocalIP()}:${port}/ws  (ChatProto v1)`);
     console.log(`  MQTT:           ws://${getLocalIP()}:${port}${MqttBinding.PATH}  (MQTT 3.1.1 over WebSocket)`);
+    console.log(`  Live metrics:   ${url}/stats`);
     console.log(`  Database:       ${DB_PATH}`);
     console.log('Scan to open on a phone:');
     qrcode.generate(url, { small: true });

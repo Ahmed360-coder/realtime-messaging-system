@@ -1,0 +1,59 @@
+/* Live metrics dashboard (Step 6). The colour tokens, .bar, .banner and .text-link come from
+   style.css; this file only adds the dashboard layout. Phone first: one column at 360px,
+   wider tiles and table on a laptop. */
+
+:root { --mqtt: #9333ea; } /* second series colour; WebSocket uses --accent (blue) */
+@media (prefers-color-scheme: dark) {
+  :root { --mqtt: #c084fc; }
+}
+
+/* The chat app is a fixed-height screen with inner scrolling; the dashboard is a normal page. */
+body.stats-page { overflow: auto; height: auto; }
+.dash { height: auto; min-height: 100dvh; max-width: 760px; }
+.bar-link { padding: 0 8px; }
+
+.dash-main {
+  display: flex; flex-direction: column; gap: 16px;
+  padding: var(--gutter);
+  padding-bottom: max(var(--gutter), env(safe-area-inset-bottom));
+}
+
+/* ---- Headline tiles: 2 x 2 on a phone, 4 in a row when there is room ---- */
+.tiles { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px; }
+@media (min-width: 600px) { .tiles { grid-template-columns: repeat(4, minmax(0, 1fr)); } }
+.tile {
+  display: flex; flex-direction: column; gap: 2px;
+  padding: 12px; border-radius: 12px; background: var(--bg);
+}
+.tile-label, .tile-split { font-size: 0.8rem; color: var(--muted); }
+.tile-value { font-size: 1.8rem; font-weight: 700; line-height: 1.1; }
+/* Digits of equal width, so numbers that change every second do not jiggle. */
+.tile-value, .compare, .plain-list { font-variant-numeric: tabular-nums; }
+
+/* ---- Cards ---- */
+.card h2 { margin: 0 0 8px; font-size: 1rem; }
+.card .hint { margin-top: 8px; }
+.chart-box { position: relative; height: 200px; } /* Chart.js fills its parent's size */
+.legend { display: flex; gap: 16px; margin: 6px 0 0; font-size: 0.85rem; color: var(--muted); }
+.swatch {
+  display: inline-block; width: 12px; height: 12px; margin-right: 6px;
+  border-radius: 3px; vertical-align: -1px;
+}
+.swatch.ws { background: var(--accent); }
+.swatch.mqtt { background: var(--mqtt); }
+
+/* ---- Comparison table: 3 columns fit a 360px screen ---- */
+.compare { width: 100%; border-collapse: collapse; font-size: 0.9rem; }
+.compare th, .compare td { padding: 6px 4px; text-align: right; border-bottom: 1px solid var(--surface-2); }
+.compare th:first-child, .compare td:first-child { text-align: left; }
+.compare thead th { color: var(--muted); font-weight: 600; }
+.compare tr.group th {
+  padding-top: 14px; text-align: left; color: var(--muted);
+  font-size: 0.75rem; letter-spacing: 0.04em; text-transform: uppercase;
+}
+
+.plain-list { margin: 0; padding: 0; list-style: none; font-size: 0.9rem; }
+.plain-list li { padding: 4px 0; border-bottom: 1px solid var(--surface-2); }
+.plain-list li.none { color: var(--muted); border: none; }
+
+.live { color: var(--ok); }

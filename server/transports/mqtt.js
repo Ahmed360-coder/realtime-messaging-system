@@ -81,12 +81,13 @@ async function createMqttEndpoint(hub, { log = () => {} } = {}) {
       protocol: 'mqtt',
       label: client.id,
       // One ChatProto message = one PUBLISH on this connection's down topic, QoS 1.
-      deliver(msg) {
+      // The broker calls back once it has routed the PUBLISH to the subscriber's connection.
+      deliver(msg, onSent) {
         if (closing || client.closed) return;
         broker.publish({
           cmd: 'publish', topic, qos: MqttBinding.QOS, retain: false,
           payload: Buffer.from(ChatProto.encode(msg), 'utf8'),
-        }, () => {});
+        }, err => { if (!err && onSent) onSent(); });
       },
       // E.g. replaced by a newer connection of the same user: say why (BYE), let the client
       // disconnect, and cut the connection ourselves if it does not.

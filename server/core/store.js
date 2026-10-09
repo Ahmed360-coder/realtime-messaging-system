@@ -60,6 +60,9 @@ class Store {
         SELECT seq, id, sender, recipient, body, ts FROM messages
         WHERE (recipient = ? OR sender = ?) AND seq > ?
         ORDER BY seq`),
+      counts: this.db.prepare(`
+        SELECT (SELECT COUNT(*) FROM messages) AS messages, (SELECT COUNT(*) FROM users) AS users,
+               (SELECT COALESCE(MAX(seq), 0) FROM messages) AS lastSeq`),
     };
   }
 
@@ -133,6 +136,12 @@ class Store {
     return this.sql.messagesAfter.all(username, username, afterSeq).map(r => ({
       seq: r.seq, id: r.id, from: r.sender, to: r.recipient, body: r.body, ts: r.ts,
     }));
+  }
+
+  /** Totals for the metrics dashboard: { messages, users, lastSeq }. Unlike counters, they survive restarts. */
+  counts() {
+    const { messages, users, lastSeq } = this.sql.counts.get();
+    return { messages, users, lastSeq };
   }
 
   close() {

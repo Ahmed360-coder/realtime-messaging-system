@@ -32,7 +32,7 @@ function createWebSocketEndpoint(hub, { log = () => {} } = {}) {
       username: null,
       protocol: 'ws',
       label: remote,
-      deliver: msg => send(ws, msg),
+      deliver: (msg, onSent) => send(ws, msg, onSent),
       close: (code, reason) => ws.close(code, reason),
     };
 
@@ -72,8 +72,10 @@ function createWebSocketEndpoint(hub, { log = () => {} } = {}) {
 }
 
 // Encode and send, but only if the socket is still open (it may be closing).
-function send(ws, msg) {
-  if (ws.readyState === WebSocket.OPEN) ws.send(ChatProto.encode(msg));
+// ws calls the callback once the frame has been written to the TCP socket; then onSent() runs.
+function send(ws, msg, onSent) {
+  if (ws.readyState !== WebSocket.OPEN) return;
+  ws.send(ChatProto.encode(msg), onSent && (err => { if (!err) onSent(); }));
 }
 
 module.exports = { createWebSocketEndpoint };

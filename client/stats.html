@@ -1,0 +1,77 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="light dark">
+  <meta name="theme-color" content="#2563eb">
+  <title>Live Metrics</title>
+  <!-- Same design tokens, top bar and banner as the chat; stats.css adds the dashboard layout. -->
+  <link rel="stylesheet" href="/style.css">
+  <link rel="stylesheet" href="/stats.css">
+</head>
+<body class="stats-page">
+  <div class="app dash">
+    <!-- Shown while the live stream is broken (EventSource reconnects by itself). -->
+    <div id="banner" class="banner" role="status" aria-live="polite" hidden>
+      <span id="bannerText"></span>
+    </div>
+
+    <header class="bar">
+      <div class="bar-title">
+        <h1>Live metrics</h1>
+        <span id="subtitle" class="subtitle">connecting…</span>
+      </div>
+      <a class="text-link bar-link" href="/">Chat</a>
+    </header>
+
+    <main class="dash-main">
+      <!-- Right now: the four headline numbers, each split by protocol. -->
+      <section class="tiles" aria-label="Current values">
+        <div class="tile"><span class="tile-label">Connections</span><span id="tConn" class="tile-value">–</span><span id="tConnSplit" class="tile-split"></span></div>
+        <div class="tile"><span class="tile-label">Users online</span><span id="tOnline" class="tile-value">–</span><span id="tOnlineSplit" class="tile-split"></span></div>
+        <div class="tile"><span class="tile-label">Messages / s</span><span id="tRate" class="tile-value">–</span><span id="tRateSplit" class="tile-split"></span></div>
+        <div class="tile"><span class="tile-label">Messages sent</span><span id="tSent" class="tile-value">–</span><span id="tSentSplit" class="tile-split"></span></div>
+      </section>
+
+      <section class="card" aria-labelledby="chartTitle">
+        <h2 id="chartTitle">Messages per second · last 60 s</h2>
+        <div class="chart-box">
+          <canvas id="rateChart" role="img" aria-label="Messages per second chart"></canvas>
+        </div>
+        <p class="legend">
+          <span><span class="swatch ws"></span>WebSocket</span>
+          <span><span class="swatch mqtt"></span>MQTT</span>
+        </p>
+      </section>
+
+      <section class="card" aria-labelledby="compareTitle">
+        <h2 id="compareTitle">WebSocket vs MQTT</h2>
+        <table class="compare">
+          <thead>
+            <tr><th scope="col">Metric</th><th scope="col">WebSocket</th><th scope="col">MQTT</th></tr>
+          </thead>
+          <!-- Rows are built once by stats.js and then only their numbers change. -->
+          <tbody id="compareBody"></tbody>
+        </table>
+        <p class="hint">Counters since the server started. Bytes are counted on the TCP connections
+          (all headers, PUBACKs and pings included). Latency is server-side only: from the moment a
+          message's frame arrives to the moment its ACK / MSG is written to the sender's /
+          recipient's connection.</p>
+      </section>
+
+      <section class="card" aria-labelledby="errorsTitle">
+        <h2 id="errorsTitle">Errors by code</h2>
+        <ul id="errors" class="plain-list"></ul>
+      </section>
+
+      <section class="card" aria-labelledby="dbTitle">
+        <h2 id="dbTitle">Database (all time)</h2>
+        <ul id="database" class="plain-list"></ul>
+      </section>
+    </main>
+  </div>
+  <script src="/vendor/chart.umd.min.js"></script>
+  <script src="/stats.js"></script>
+</body>
+</html>

@@ -83,6 +83,9 @@ Code layout: `protocols/chatproto.js` (format) and `protocols/mqtt-binding.js` (
 `server/core/dispatch.js` (the ChatProto state machine, shared by both transports) →
 `server/core/hub.js` (protocol-agnostic routing, presence, sync) → `server/core/store.js`
 (SQLite). `server/index.js` routes each WebSocket upgrade by path (`/ws` or `/mqtt`).
+Monitoring (Step 6): `server/core/metrics.js` listens to the hub's events and counts TCP sockets;
+`server/stats-routes.js` serves `/stats`, `/api/stats` and the SSE stream `/api/stats/stream`;
+`client/stats.html` + `stats.js` + `stats.css` are the dashboard page.
 Client side: `client/mqtt-socket.js` (an MQTT connection that looks like a WebSocket) →
 `client/chat-client.js` (retry, dedup, reconnect; no UI) → `client/conversations.js`
 (page state; no UI) → `client/app.js` + `index.html` + `style.css` (the phone UI).
@@ -224,8 +227,60 @@ every MQTT packet (`CONNECT`, `SUBACK`, `PUBLISH … id=7`, `PUBACK id=7` …).
 ### Additional Features (planned)
 - Group chat.
 
-### Monitoring
-- `/stats` page: active connections, messages per second, totals.
+### Monitoring – live metrics dashboard (Step 6)
+Open `http://<laptop-ip>:3000/stats` (also linked from the join screen). It updates every second.
+
+**What is measured** (`server/core/metrics.js`), each split into **WebSocket vs MQTT**:
+
+| Metric | Kind | Source |
+|---|---|---|
+| Connections open / opened since start | gauge / counter | TCP sockets upgraded on `/ws` or `/mqtt` |
+| Users online | gauge | the hub's online map, read at snapshot time |
+| Messages per second (avg of the last 10 s) + chart of the last 60 s | rate | sliding window of 60 one-second buckets |
+| Messages sent (new) · delivered live · stored for offline user · duplicates · received live · replayed by sync | counters | hub events |
+| Errors by code (`BAD_JSON`, `UNKNOWN_USER` …, `INTERNAL`) | counters | every ChatProto `ERROR` reply |
+| Bytes in / out | counters | `socket.bytesRead` / `bytesWritten` of each TCP connection |
+| Server latency: ACK and delivery, p50 / p95 / max (ms) | summary of the last 1000 samples | `performance.now()` |
+| Messages, users and last `seq` in the database | totals that survive restarts | SQLite `COUNT(*)` / `MAX(seq)` |
+
+- **Counter / gauge / rate.** A counter only goes up (resets on restart). A gauge is a current
+  value that is never stored; it is read from the live state, so it cannot drift. A rate is
+  a counter's growth per second.
+- **Sliding window.** A ring buffer of 61 per-second buckets: 60 finished seconds plus the
+  current one. A message adds 1 to the bucket of the current second. Buckets of seconds that
+  have passed are reset and reused, so memory never grows. msg/s = sum of the last 10 *finished*
+  seconds ÷ 10. A duplicate (retry) is not a new message and is not counted.
+- **Latency (server-side part).** Both intervals start when the frame reaches the server.
+  - **ACK latency** ends when the `ACK` is written to the sender's connection: parsing, the SQLite
+    write with fsync, routing.
+  - **Delivery latency** ends when the `MSG` is written to the recipient's connection. For
+    WebSocket: the `ws.send` callback. For MQTT: the broker's publish callback.
+  - It uses the **monotonic** clock `performance.now()`: sub-millisecond, and it never jumps when
+    the OS corrects the wall clock. Phone clocks are not synchronised with the laptop, so
+    phone-to-phone time is measured in Step 9 as a round trip on one clock.
+  - p50 is the median; p95 shows the slow tail that an average hides.
+- **Bytes on the wire.** Counted by Node's `net.Socket` on every upgraded TCP connection:
+  the HTTP Upgrade, WebSocket and MQTT headers, topics, `PUBACK`s, pings and our JSON. That is the
+  real overhead the Step 9 comparison needs.
+
+**Design: metrics stay out of the protocol logic (observer pattern).** The hub is an
+`EventEmitter`. The hub and `dispatch.js` only announce what happened: `message`, `delivered`,
+`acked`, `synced`, `failure`. `metrics.js` is the only listener and decides what to count.
+Transports only gained an optional "written" callback, `session.deliver(msg, onSent)`.
+`server/index.js` hands each upgraded TCP socket to `metrics.trackSocket()`.
+
+**Live updates: Server-Sent Events.** `GET /api/stats/stream` is one HTTP response that never
+ends (`Content-Type: text/event-stream`). Every second the server writes `data: <snapshot JSON>`
+followed by an empty line. The page reads it with the browser's built-in `EventSource`, which
+reconnects by itself (the server sends `retry: 2000`).
+- *Why not polling:* polling costs a full HTTP request per update.
+- *Why not a WebSocket:* a dashboard on `/ws` would count itself as a chat connection.
+- SSE is one-way (server → page), which is all a dashboard needs.
+- The server pushes on a fixed 1 s tick, not per message, and computes one snapshot for all viewers.
+
+`GET /api/stats` returns the same snapshot once, for curl and the Step 9 benchmark script.
+The chart uses Chart.js, served by our server at `/vendor/chart.umd.min.js` so phones need no
+internet. Like the chat, the page writes text only through `textContent` (checked by the XSS test).
 
 ## Performance Evaluation (planned)
 - Latency (average sender → recipient time).
@@ -249,7 +304,7 @@ docs/        design document and diagrams
 - [x] Step 3 – Reliability: SQLite storage, ACKs, deduplication, offline sync
 - [x] Step 4 – Mobile chat UI
 - [x] Step 5 – MQTT: second application-layer protocol
-- [ ] Step 6 – Live metrics dashboard
+- [x] Step 6 – Live metrics dashboard
 - [ ] Step 7 – Group chat
 - [ ] Step 8 – End-to-end encryption
 - [ ] Step 9 – Benchmarks and charts
@@ -268,6 +323,8 @@ npm test        # unit + integration tests
 `PORT` and `DB_PATH` run a second copy without touching the real database, e.g.
 `PORT=3105 DB_PATH=/tmp/test.db npm start` (bash) or
 `$env:PORT=3105; $env:DB_PATH="$env:TEMP\test.db"; npm start` (PowerShell).
+
+Live metrics: `http://<laptop-ip>:3000/stats` (JSON: `/api/stats`).
 
 The server prints its Wi-Fi address and a QR code. Open that address on a phone connected
 to the same Wi-Fi. If the phone cannot connect, allow Node.js through Windows Firewall

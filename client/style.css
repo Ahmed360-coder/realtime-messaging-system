@@ -142,6 +142,10 @@ button { cursor: pointer; }
   background: var(--accent); color: var(--accent-text); font-weight: 600;
 }
 .primary:disabled { opacity: 0.6; }
+.text-link { /* a plain link that is still a full-size tap target */
+  display: flex; align-items: center; justify-content: center;
+  min-height: var(--tap); color: var(--accent); font-weight: 600; text-decoration: none;
+}
 
 /* ---- Contact list ---- */
 .contacts {
